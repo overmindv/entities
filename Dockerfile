@@ -3,15 +3,15 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ironhide ./cmd/ironhide
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/entities ./cmd/entities
 RUN GOBIN=/out go install github.com/pressly/goose/v3/cmd/goose@v3.26.0
 
 FROM alpine:3.22
-RUN apk add --no-cache ca-certificates wget && addgroup -S ironhide && adduser -S ironhide -G ironhide && mkdir -p /var/log/ironhide && chown -R ironhide:ironhide /var/log/ironhide
+RUN apk add --no-cache ca-certificates wget && addgroup -S entities && adduser -S entities -G entities && mkdir -p /var/log/entities && chown -R entities:entities /var/log/entities
 WORKDIR /app
-COPY --from=build /out/ironhide /usr/local/bin/ironhide
+COPY --from=build /out/entities /usr/local/bin/entities
 COPY --from=build /out/goose /usr/local/bin/goose
 COPY migrations /app/migrations
-USER ironhide
+USER entities
 EXPOSE 8080
-ENTRYPOINT ["ironhide"]
+ENTRYPOINT ["entities"]

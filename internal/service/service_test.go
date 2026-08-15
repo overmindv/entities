@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/overmindv/ironhide/internal/domain"
+	"github.com/overmindv/entities/internal/domain"
 )
 
 // recordingStore запоминает входы service layer для unit-тестов нормализации.

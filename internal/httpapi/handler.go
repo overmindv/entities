@@ -11,18 +11,18 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/overmindv/ironhide/internal/apperror"
-	"github.com/overmindv/ironhide/internal/domain"
-	"github.com/overmindv/ironhide/internal/service"
+	"github.com/overmindv/entities/internal/apperror"
+	"github.com/overmindv/entities/internal/domain"
+	"github.com/overmindv/entities/internal/service"
 )
 
-// Handler обслуживает внутренний HTTP JSON API Ironhide.
+// Handler обслуживает внутренний HTTP JSON API Entities.
 type Handler struct {
 	service *service.Service
 	logger  *slog.Logger
 }
 
-// New собирает router Ironhide с health, read и write endpoints.
+// New собирает router Entities с health, read и write endpoints.
 func New(catalog *service.Service, logger *slog.Logger, requestLoggers ...*slog.Logger) http.Handler {
 	handler := &Handler{
 		service: catalog,
@@ -414,7 +414,7 @@ func (h *Handler) admin(w http.ResponseWriter, r *http.Request) (string, bool) {
 		}
 	}
 	if !isAdmin || uuid.Validate(actorID) != nil {
-		// actorID обязан быть UUID, потому что Ironhide пишет его в audit/outbox поля PostgreSQL.
+		// actorID обязан быть UUID, потому что Entities пишет его в audit/outbox поля PostgreSQL.
 		h.writeError(w, apperror.New(apperror.PermissionDenied, "операция доступна только администратору", http.StatusForbidden))
 		return "", false
 	}
@@ -510,7 +510,7 @@ func requestIDMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// requestID достаёт request_id из context для логов Ironhide.
+// requestID достаёт request_id из context для логов Entities.
 func requestID(ctx context.Context) string {
 	value, _ := ctx.Value(requestIDKey{}).(string)
 
@@ -562,7 +562,7 @@ func loggingMiddleware(log *slog.Logger, next http.Handler, ignoredPaths ...stri
 		if status == 0 {
 			status = http.StatusOK
 		}
-		log.InfoContext(r.Context(), "ironhide http request",
+		log.InfoContext(r.Context(), "entities http request",
 			"request_id", requestID(r.Context()),
 			"method", r.Method,
 			"path", r.URL.Path,

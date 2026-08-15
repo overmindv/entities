@@ -1,13 +1,13 @@
 LOCAL_BIN := $(CURDIR)/bin
 GOLANGCI_LINT := $(LOCAL_BIN)/golangci-lint
 GOOSE := $(LOCAL_BIN)/goose
-DATABASE_URL ?= postgres://ironhide:ironhide@localhost:5432/ironhide?sslmode=disable
+DATABASE_URL ?= postgres://entities:entities@localhost:5432/entities?sslmode=disable
 
 .PHONY: run build test lint migrate-up migrate-down tidy
 
 # Запуск сервиса на хосте
 run:
-	go run ./cmd/ironhide
+	go run ./cmd/entities
 
 # Сборка сервиса
 build:

@@ -1,6 +1,6 @@
-# Ironhide
+# entities
 
-Ironhide - catalog service платформы Overmindv. Он владеет университетами, программами, курсами, темами, иерархией тем и prerequisites.
+entities - catalog service платформы Overmindv. Он владеет университетами, программами, курсами, темами, иерархией тем и prerequisites.
 
 ## Функционал
 
@@ -16,7 +16,7 @@ Ironhide - catalog service платформы Overmindv. Он владеет у�
 
 ## Бизнес-логика
 
-Ironhide не хранит пользователей и роли. Write-операции доступны только actor с ролью `admin` или `superuser`, которую проверяет Laserbeak по JWT Arcee и передаёт в Ironhide через internal headers.
+entities не хранит пользователей и роли. Write-операции доступны только actor с ролью `admin` или `superuser`, которую проверяет api-gateway по JWT Users и передаёт в entities через internal headers.
 
 Связи `program.university_id`, `course.program_id` и `topic.course_id` могут быть пустыми. Это backlog-режим: сущность уже создана, но ещё не привязана к родителю. Пустые optional UUID нормализуются в `nil`, чтобы PostgreSQL не получал пустые строки вместо UUID.
 
@@ -24,10 +24,10 @@ Ironhide не хранит пользователей и роли. Write-опе�
 
 ## Запуск
 
-Локально сервис запускается в составе общего окружения из `ratchet`:
+Локально сервис запускается в составе общего окружения из `infra`:
 
 ```bash
-cd ../ratchet
+cd ../infra
 cp .env.example .env
 make up
 ```
@@ -43,7 +43,7 @@ make build
 Миграции на локальной БД:
 
 ```bash
-make migrate-up DATABASE_URL='postgres://ironhide:ironhide@localhost:5432/ironhide?sslmode=disable'
+make migrate-up DATABASE_URL='postgres://entities:entities@localhost:5432/entities?sslmode=disable'
 ```
 
-HTTP API Ironhide является внутренним API для Laserbeak. Frontend должен обращаться только к GraphQL endpoint Laserbeak.
+HTTP API entities является внутренним API для api-gateway. Frontend должен обращаться только к GraphQL endpoint api-gateway.
