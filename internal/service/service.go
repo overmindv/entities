@@ -9,12 +9,12 @@ import (
 	"unicode"
 
 	"github.com/google/uuid"
-	"github.com/overmindv/ironhide/internal/apperror"
-	"github.com/overmindv/ironhide/internal/domain"
+	"github.com/overmindv/entities/internal/apperror"
+	"github.com/overmindv/entities/internal/domain"
 	"github.com/samber/lo"
 )
 
-// Store задаёт storage contract для catalog-сущностей Ironhide.
+// Store задаёт storage contract для catalog-сущностей Entities.
 type Store interface {
 	Ping(ctx context.Context) error
 	CreateUniversity(ctx context.Context, item domain.University) (domain.University, error)

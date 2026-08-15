@@ -10,8 +10,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/overmindv/ironhide/internal/domain"
-	"github.com/overmindv/ironhide/internal/service"
+	"github.com/overmindv/entities/internal/domain"
+	"github.com/overmindv/entities/internal/service"
 )
 
 // catalogCreateStore сохраняет write inputs из HTTP handler для проверки actor и optional UUID.
@@ -121,7 +121,7 @@ func TestCreateEndpointsAcceptAdminAndEmptyOptionalUUIDs(t *testing.T) {
 	}
 }
 
-// postCatalogJSON отправляет write-запрос в HTTP handler Ironhide с admin headers.
+// postCatalogJSON отправляет write-запрос в HTTP handler Entities с admin headers.
 func postCatalogJSON(t *testing.T, handler http.Handler, path string, payload any) *httptest.ResponseRecorder {
 	t.Helper()
 	body, err := json.Marshal(payload)

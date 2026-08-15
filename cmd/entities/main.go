@@ -13,13 +13,13 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/overmindv/ironhide/internal/config"
-	"github.com/overmindv/ironhide/internal/httpapi"
-	"github.com/overmindv/ironhide/internal/repository"
-	"github.com/overmindv/ironhide/internal/service"
+	"github.com/overmindv/entities/internal/config"
+	"github.com/overmindv/entities/internal/httpapi"
+	"github.com/overmindv/entities/internal/repository"
+	"github.com/overmindv/entities/internal/service"
 )
 
-// main загружает конфигурацию, открывает PostgreSQL pool и запускает HTTP API Ironhide.
+// main загружает конфигурацию, открывает PostgreSQL pool и запускает HTTP API Entities.
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
@@ -54,7 +54,7 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 	go func() {
-		logger.Info("Ironhide запущен", "address", cfg.HTTPAddress, "environment", cfg.Environment)
+		logger.Info("Entities запущен", "address", cfg.HTTPAddress, "environment", cfg.Environment)
 		if listenErr := server.ListenAndServe(); listenErr != nil && !errors.Is(listenErr, http.ErrServerClosed) {
 			logger.Error("HTTP-сервер завершился с ошибкой", "error", listenErr)
 			stop()
@@ -69,7 +69,7 @@ func main() {
 	}
 }
 
-// requestLogger создаёт отдельный JSON-логгер для HTTP-запросов Ironhide.
+// requestLogger создаёт отдельный JSON-логгер для HTTP-запросов Entities.
 func requestLogger(path string, fallback *slog.Logger) (*slog.Logger, func(), error) {
 	if path == "" {
 		return fallback, func() {}, nil

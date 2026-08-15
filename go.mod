@@ -1,4 +1,4 @@
-module github.com/overmindv/ironhide
+module github.com/overmindv/entities
 
 go 1.25.0
 

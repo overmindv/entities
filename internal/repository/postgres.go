@@ -11,11 +11,11 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/overmindv/ironhide/internal/apperror"
-	"github.com/overmindv/ironhide/internal/domain"
+	"github.com/overmindv/entities/internal/apperror"
+	"github.com/overmindv/entities/internal/domain"
 )
 
-// Postgres реализует storage contract Ironhide поверх PostgreSQL.
+// Postgres реализует storage contract Entities поверх PostgreSQL.
 type Postgres struct {
 	pool *pgxpool.Pool
 }
@@ -625,7 +625,7 @@ func scanTopic(row scanner) (domain.Topic, error) {
 	return item, err
 }
 
-// translateNotFound преобразует pgx.ErrNoRows в публичную not-found ошибку Ironhide.
+// translateNotFound преобразует pgx.ErrNoRows в публичную not-found ошибку Entities.
 func translateNotFound(err error, code string) error {
 	if errors.Is(err, pgx.ErrNoRows) {
 		return apperror.New(code, "объект не найден", 404)
@@ -634,7 +634,7 @@ func translateNotFound(err error, code string) error {
 	return err
 }
 
-// translateConstraint преобразует PostgreSQL constraint violations в публичную ошибку Ironhide.
+// translateConstraint преобразует PostgreSQL constraint violations в публичную ошибку Entities.
 func translateConstraint(err error, code string) error {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && (pgErr.Code == "23505" || pgErr.Code == "23514" || pgErr.Code == "23503") {

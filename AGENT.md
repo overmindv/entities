@@ -77,37 +77,37 @@ return result, nil
 8. Не обходи API Gateway для внешних пользовательских запросов.
 9. Не делай silent failure. Ошибки должны быть обработаны.
 10. Не используй `panic` для обычных ошибок.
-11. Не добавляй GraphQL-логику в сервисы, кроме `laserbeak`.
-12. Не добавляй frontend-запросы напрямую к микросервисам, минуя `laserbeak`.
+11. Не добавляй GraphQL-логику в сервисы, кроме `api-gateway`.
+12. Не добавляй frontend-запросы напрямую к микросервисам, минуя `api-gateway`.
 
 ## 6. Архитектурные правила Overmindv
 
 Сервисы платформы:
 
-1. `arcee` — identity/users service: пользователи, роли, авторизация.
-2. `ironhide` — catalog service: университеты, программы, курсы, темы, связи тем.
-3. `bumblebee` — content service: статьи, конспекты, материалы.
-4. `mirage` — media service: файлы, изображения, вложения, presigned URLs.
-5. `laserbeak` — API Gateway / BFF на GraphQL для связи frontend и backend-сервисов.
-6. `soundwave` — web frontend.
-7. `ratchet` — infrastructure repository: Docker, Kubernetes, Helm, окружения, CI/CD, локальный запуск.
+1. `users` — identity/users service: пользователи, роли, авторизация.
+2. `entities` — catalog service: университеты, программы, курсы, темы, связи тем.
+3. `content` — content service: статьи, конспекты, материалы.
+4. `media` — media service: файлы, изображения, вложения, presigned URLs.
+5. `api-gateway` — API Gateway / BFF на GraphQL для связи frontend и backend-сервисов.
+6. `frontend` — web frontend.
+7. `infra` — infrastructure repository: Docker, Kubernetes, Helm, окружения, CI/CD, локальный запуск.
 
 Правила взаимодействия:
 
-1. `soundwave` общается только с `laserbeak`.
-2. `laserbeak` общается с backend-сервисами по внутренним API.
-3. `ironhide` владеет структурой знаний: universities, programs, courses, topics.
-4. `bumblebee` не хранит структуру курсов у себя, а ссылается на ID из `ironhide`.
-5. `mirage` владеет файлами и медиа. Другие сервисы хранят только `file_id`.
-6. `arcee` владеет пользователями и ролями.
-7. `ratchet` владеет инфраструктурной конфигурацией.
+1. `frontend` общается только с `api-gateway`.
+2. `api-gateway` общается с backend-сервисами по внутренним API.
+3. `entities` владеет структурой знаний: universities, programs, courses, topics.
+4. `content` не хранит структуру курсов у себя, а ссылается на ID из `entities`.
+5. `media` владеет файлами и медиа. Другие сервисы хранят только `file_id`.
+6. `users` владеет пользователями и ролями.
+7. `infra` владеет инфраструктурной конфигурацией.
 8. Каждый сервис владеет своей БД.
 9. Один сервис не читает таблицы другого сервиса напрямую.
 10. Межсервисные связи — через API и события.
 
-## 7. Правила для сервиса Ironhide
+## 7. Правила для сервиса entities
 
-`ironhide` — сервис канонической структуры платформы.
+`entities` — сервис канонической структуры платформы.
 
 Он отвечает за:
 
@@ -119,26 +119,26 @@ return result, nil
 6. Пререквизиты тем.
 7. Валидацию связки `university_id → program_id → course_id → topic_id`.
 
-`ironhide` не отвечает за:
+`entities` не отвечает за:
 
-1. Пользователей и роли — это `arcee`.
-2. Статьи и материалы — это `bumblebee`.
-3. Файлы и изображения — это `mirage`.
-4. Frontend — это `soundwave`.
-5. GraphQL gateway — это `laserbeak`.
-6. Docker/Kubernetes manifests — это `ratchet`, но при необходимости надо обновить его.
+1. Пользователей и роли — это `users`.
+2. Статьи и материалы — это `content`.
+3. Файлы и изображения — это `media`.
+4. Frontend — это `frontend`.
+5. GraphQL gateway — это `api-gateway`.
+6. Docker/Kubernetes manifests — это `infra`, но при необходимости надо обновить его.
 7. AI-анализ — отдельные будущие сервисы.
 
 ## 8. API и контракты
 
-1. Внешний API для web находится в `laserbeak` и описывается GraphQL schema.
-2. `ironhide` предоставляет внутренний API для `laserbeak` и других сервисов.
+1. Внешний API для web находится в `api-gateway` и описывается GraphQL schema.
+2. `entities` предоставляет внутренний API для `api-gateway` и других сервисов.
 3. Все DTO должны иметь стабильные поля и явные ID.
 4. Все ID должны быть UUID.
 5. Для списков используй pagination.
 6. Для фильтров используй явные поля, а не один произвольный `filter`.
 7. Для ошибок возвращай машинно-читаемый code и человекочитаемый message.
-8. GraphQL-resolvers в `laserbeak` не должны содержать бизнес-логику.
+8. GraphQL-resolvers в `api-gateway` не должны содержать бизнес-логику.
 9. Валидация и бизнес-правила должны жить в соответствующем сервисе.
 
 ## 9. База данных
@@ -155,7 +155,7 @@ return result, nil
 
 ## 10. Безопасность
 
-1. Все admin-действия должны проверять права через `arcee` или через claims, переданные `laserbeak`.
+1. Все admin-действия должны проверять права через `users` или через claims, переданные `api-gateway`.
 2. Нельзя доверять данным, пришедшим с frontend.
 3. Все входные данные должны валидироваться.
 4. Все write-операции должны логироваться на уровне audit/business events, если они меняют важные сущности.
@@ -175,8 +175,8 @@ return result, nil
 5. Линтер.
 6. Сборку Docker image.
 7. Локальный запуск через Docker Compose, если он затронут.
-8. GraphQL schema, если изменён `laserbeak`.
-9. Frontend typecheck/build, если изменён `soundwave`.
+8. GraphQL schema, если изменён `api-gateway`.
+9. Frontend typecheck/build, если изменён `frontend`.
 
 Минимальные команды проверки указывай в финальном ответе.
 

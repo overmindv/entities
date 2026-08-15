@@ -20,7 +20,7 @@ const (
 	InternalError            = "INTERNAL_ERROR"
 )
 
-// Error описывает публичную JSON-ошибку Ironhide с машинным code.
+// Error описывает публичную JSON-ошибку Entities с машинным code.
 type Error struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
@@ -32,7 +32,7 @@ func (e *Error) Error() string {
 	return fmt.Sprintf("%s: %s", e.Code, e.Message)
 }
 
-// New создаёт публичную ошибку Ironhide с HTTP status.
+// New создаёт публичную ошибку Entities с HTTP status.
 func New(code, message string, status int) *Error {
 	return &Error{
 		Code:    code,
