@@ -1,14 +1,12 @@
 package httpapi
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/overmindv/entities/internal/apperror"
@@ -16,72 +14,57 @@ import (
 	"github.com/overmindv/entities/internal/service"
 )
 
+// Router — минимальный контракт регистрации HTTP-роутов. Реализуется как
+// *parker.HTTPServer (в проде), так и *http.ServeMux (в тестах).
+type Router interface {
+	Handle(pattern string, handler http.Handler)
+	HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request))
+}
+
 // Handler обслуживает внутренний HTTP JSON API Entities.
 type Handler struct {
 	service *service.Service
 	logger  *slog.Logger
 }
 
-// New собирает router Entities с health, read и write endpoints.
-func New(catalog *service.Service, logger *slog.Logger, requestLoggers ...*slog.Logger) http.Handler {
+// Register регистрирует бизнес-роуты Entities на роутер parker.
+// health/ready/request-id/access-log/metrics предоставляет parker.
+func Register(router Router, catalog *service.Service, logger *slog.Logger) {
 	handler := &Handler{
 		service: catalog,
 		logger:  logger,
 	}
-	requestLogger := logger
-	if len(requestLoggers) > 0 && requestLoggers[0] != nil {
-		requestLogger = requestLoggers[0]
-	}
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", handler.health)
-	mux.HandleFunc("GET /ready", handler.ready)
-	mux.HandleFunc("GET /v1/universities", handler.listUniversities)
-	mux.HandleFunc("POST /v1/universities", handler.createUniversity)
-	mux.HandleFunc("GET /v1/universities/{id}", handler.getUniversity)
-	mux.HandleFunc("PUT /v1/universities/{id}", handler.updateUniversity)
-	mux.HandleFunc("DELETE /v1/universities/{id}", handler.deleteUniversity)
-	mux.HandleFunc("PATCH /v1/universities/{id}/status", handler.changeUniversityStatus)
-	mux.HandleFunc("GET /v1/programs", handler.listPrograms)
-	mux.HandleFunc("POST /v1/programs", handler.createProgram)
-	mux.HandleFunc("GET /v1/programs/{id}", handler.getProgram)
-	mux.HandleFunc("PUT /v1/programs/{id}", handler.updateProgram)
-	mux.HandleFunc("DELETE /v1/programs/{id}", handler.deleteProgram)
-	mux.HandleFunc("PATCH /v1/programs/{id}/status", handler.changeProgramStatus)
-	mux.HandleFunc("GET /v1/courses", handler.listCourses)
-	mux.HandleFunc("POST /v1/courses", handler.createCourse)
-	mux.HandleFunc("GET /v1/courses/{id}", handler.getCourse)
-	mux.HandleFunc("PUT /v1/courses/{id}", handler.updateCourse)
-	mux.HandleFunc("DELETE /v1/courses/{id}", handler.deleteCourse)
-	mux.HandleFunc("PATCH /v1/courses/{id}/status", handler.changeCourseStatus)
-	mux.HandleFunc("GET /v1/topics", handler.listTopics)
-	mux.HandleFunc("POST /v1/topics", handler.createTopic)
-	mux.HandleFunc("GET /v1/topics/{id}", handler.getTopic)
-	mux.HandleFunc("PUT /v1/topics/{id}", handler.updateTopic)
-	mux.HandleFunc("DELETE /v1/topics/{id}", handler.deleteTopic)
-	mux.HandleFunc("PATCH /v1/topics/{id}/status", handler.changeTopicStatus)
-	mux.HandleFunc("GET /v1/topic-tree", handler.topicTreeByQuery)
-	mux.HandleFunc("GET /v1/courses/{id}/topic-tree", handler.topicTree)
-	mux.HandleFunc("GET /v1/topics/{id}/prerequisites", handler.listPrerequisites)
-	mux.HandleFunc("POST /v1/topics/{id}/prerequisites", handler.addPrerequisite)
-	mux.HandleFunc("DELETE /v1/topics/{id}/prerequisites/{prerequisite_id}", handler.removePrerequisite)
-	mux.HandleFunc("GET /v1/validate/{entity}/{id}", handler.validateEntity)
-	mux.HandleFunc("POST /v1/validate/binding", handler.validateBinding)
-
-	return requestIDMiddleware(loggingMiddleware(requestLogger, recoverMiddleware(logger, mux), "/health", "/ready"))
-}
-
-// health возвращает liveness без проверки внешних зависимостей.
-func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-}
-
-// ready проверяет доступность PostgreSQL для readiness.
-func (h *Handler) ready(w http.ResponseWriter, r *http.Request) {
-	if err := h.service.Store().Ping(r.Context()); err != nil {
-		h.writeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+	router.HandleFunc("GET /v1/universities", handler.listUniversities)
+	router.HandleFunc("POST /v1/universities", handler.createUniversity)
+	router.HandleFunc("GET /v1/universities/{id}", handler.getUniversity)
+	router.HandleFunc("PUT /v1/universities/{id}", handler.updateUniversity)
+	router.HandleFunc("DELETE /v1/universities/{id}", handler.deleteUniversity)
+	router.HandleFunc("PATCH /v1/universities/{id}/status", handler.changeUniversityStatus)
+	router.HandleFunc("GET /v1/programs", handler.listPrograms)
+	router.HandleFunc("POST /v1/programs", handler.createProgram)
+	router.HandleFunc("GET /v1/programs/{id}", handler.getProgram)
+	router.HandleFunc("PUT /v1/programs/{id}", handler.updateProgram)
+	router.HandleFunc("DELETE /v1/programs/{id}", handler.deleteProgram)
+	router.HandleFunc("PATCH /v1/programs/{id}/status", handler.changeProgramStatus)
+	router.HandleFunc("GET /v1/courses", handler.listCourses)
+	router.HandleFunc("POST /v1/courses", handler.createCourse)
+	router.HandleFunc("GET /v1/courses/{id}", handler.getCourse)
+	router.HandleFunc("PUT /v1/courses/{id}", handler.updateCourse)
+	router.HandleFunc("DELETE /v1/courses/{id}", handler.deleteCourse)
+	router.HandleFunc("PATCH /v1/courses/{id}/status", handler.changeCourseStatus)
+	router.HandleFunc("GET /v1/topics", handler.listTopics)
+	router.HandleFunc("POST /v1/topics", handler.createTopic)
+	router.HandleFunc("GET /v1/topics/{id}", handler.getTopic)
+	router.HandleFunc("PUT /v1/topics/{id}", handler.updateTopic)
+	router.HandleFunc("DELETE /v1/topics/{id}", handler.deleteTopic)
+	router.HandleFunc("PATCH /v1/topics/{id}/status", handler.changeTopicStatus)
+	router.HandleFunc("GET /v1/topic-tree", handler.topicTreeByQuery)
+	router.HandleFunc("GET /v1/courses/{id}/topic-tree", handler.topicTree)
+	router.HandleFunc("GET /v1/topics/{id}/prerequisites", handler.listPrerequisites)
+	router.HandleFunc("POST /v1/topics/{id}/prerequisites", handler.addPrerequisite)
+	router.HandleFunc("DELETE /v1/topics/{id}/prerequisites/{prerequisite_id}", handler.removePrerequisite)
+	router.HandleFunc("GET /v1/validate/{entity}/{id}", handler.validateEntity)
+	router.HandleFunc("POST /v1/validate/binding", handler.validateBinding)
 }
 
 // createUniversity создаёт университет после проверки роли admin/superuser.
@@ -492,96 +475,4 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
-}
-
-type requestIDKey struct{}
-
-const requestIDHeader = "X-Request-ID"
-
-// requestIDMiddleware переносит входящий request_id в context и response header.
-func requestIDMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestID := strings.TrimSpace(r.Header.Get(requestIDHeader))
-		if requestID == "" || len(requestID) > 128 {
-			requestID = uuid.NewString()
-		}
-		w.Header().Set(requestIDHeader, requestID)
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), requestIDKey{}, requestID)))
-	})
-}
-
-// requestID достаёт request_id из context для логов Entities.
-func requestID(ctx context.Context) string {
-	value, _ := ctx.Value(requestIDKey{}).(string)
-
-	return value
-}
-
-// responseRecorder сохраняет status и размер ответа для request logging.
-type responseRecorder struct {
-	http.ResponseWriter
-	status int
-	bytes  int
-}
-
-// WriteHeader запоминает HTTP status перед записью в исходный ResponseWriter.
-func (r *responseRecorder) WriteHeader(status int) {
-	r.status = status
-	r.ResponseWriter.WriteHeader(status)
-}
-
-// Write запоминает размер body, чтобы запись request log показывала объём ответа.
-func (r *responseRecorder) Write(body []byte) (int, error) {
-	if r.status == 0 {
-		r.WriteHeader(http.StatusOK)
-	}
-	written, err := r.ResponseWriter.Write(body)
-	r.bytes += written
-
-	return written, err
-}
-
-// loggingMiddleware пишет отдельные HTTP request logs и пропускает служебные health endpoints.
-func loggingMiddleware(log *slog.Logger, next http.Handler, ignoredPaths ...string) http.Handler {
-	ignored := make(map[string]struct{}, len(ignoredPaths))
-	for _, path := range ignoredPaths {
-		ignored[path] = struct{}{}
-	}
-
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		started := time.Now()
-		recorder := &responseRecorder{ResponseWriter: w}
-		next.ServeHTTP(recorder, r)
-		if log == nil {
-			return
-		}
-		if _, skip := ignored[r.URL.Path]; skip {
-			return
-		}
-		status := recorder.status
-		if status == 0 {
-			status = http.StatusOK
-		}
-		log.InfoContext(r.Context(), "entities http request",
-			"request_id", requestID(r.Context()),
-			"method", r.Method,
-			"path", r.URL.Path,
-			"status", status,
-			"response_bytes", recorder.bytes,
-			"duration", time.Since(started),
-		)
-	})
-}
-
-// recoverMiddleware ловит unexpected panic и возвращает обезличенную внутреннюю ошибку.
-func recoverMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer func() {
-			if recovered := recover(); recovered != nil {
-				logger.Error("паника при обработке запроса", "request_id", requestID(r.Context()), "error", recovered)
-				writeJSON(w, http.StatusInternalServerError, apperror.New(apperror.InternalError, "внутренняя ошибка", http.StatusInternalServerError))
-			}
-		}()
-		next.ServeHTTP(w, r)
-	})
 }

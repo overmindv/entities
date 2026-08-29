@@ -102,7 +102,9 @@ func TestCreateEndpointsAcceptAdminAndEmptyOptionalUUIDs(t *testing.T) {
 	t.Parallel()
 
 	store := &catalogCreateStore{}
-	handler := New(service.New(store), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	mux := http.NewServeMux()
+	Register(mux, service.New(store), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	handler := mux
 
 	university := postCatalogJSON(t, handler, "/v1/universities", map[string]any{"name": "University", "logo_file_id": ""})
 	if university.Code != http.StatusCreated {
