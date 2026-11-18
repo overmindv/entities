@@ -156,6 +156,11 @@ func (s *Service) CreateTopic(ctx context.Context, item domain.Topic, actorID st
 	if !validUUIDPointer(item.CourseID) || item.Title == "" {
 		return domain.Topic{}, validation("course_id должен быть UUID, если он передан; title обязателен")
 	}
+	metadata, err := normalizeLearningMetadata(item.LearningMetadata)
+	if err != nil {
+		return domain.Topic{}, err
+	}
+	item.LearningMetadata = metadata
 	// Родителя проверяем до записи, чтобы тема не могла попасть в чужой курс или создать цикл иерархии.
 	if err := s.validateParent(ctx, item.ID, item.CourseID, item.ParentTopicID); err != nil {
 		return domain.Topic{}, err
@@ -178,6 +183,10 @@ func (s *Service) UpdateTopic(ctx context.Context, item domain.Topic, actorID st
 	item.UpdatedBy = actorID
 	if item.Title == "" {
 		return domain.Topic{}, validation("title обязателен")
+	}
+	item.LearningMetadata, err = normalizeLearningMetadata(item.LearningMetadata)
+	if err != nil {
+		return domain.Topic{}, err
 	}
 	// course_id берём из текущей темы, потому что update меняет только профиль темы, а не переносит её между курсами.
 	if err := s.validateParent(ctx, item.ID, item.CourseID, item.ParentTopicID); err != nil {
