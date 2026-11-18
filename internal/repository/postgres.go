@@ -2,7 +2,6 @@ package repository
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -34,20 +33,18 @@ func (r *Postgres) Ping(ctx context.Context) error {
 
 // CreateUniversity создаёт университет и outbox event.
 func (r *Postgres) CreateUniversity(ctx context.Context, item domain.University) (domain.University, error) {
-	row := r.pool.QueryRow(ctx, `
-        INSERT INTO universities (name, short_name, city, country, website_url, logo_file_id, status, created_by, updated_by)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
-        RETURNING id, name, short_name, city, country, website_url, logo_file_id, status, created_by, updated_by, created_at, updated_at, deleted_at`,
-		item.Name, item.ShortName, item.City, item.Country, item.WebsiteURL, item.LogoFileID, item.Status, item.CreatedBy)
-	result, err := scanUniversity(row)
-	if err != nil {
-		return domain.University{}, translateConstraint(err, apperror.UniversityAlreadyExists)
-	}
-	if err := r.event(ctx, "catalog.university.created", "university", result.ID, item.CreatedBy, result); err != nil {
-		return domain.University{}, err
-	}
-
-	return result, nil
+	return writeCatalog(ctx, r.pool, func(tx pgx.Tx) (domain.University, error) {
+		row := tx.QueryRow(ctx, `
+	        INSERT INTO universities (name, short_name, city, country, website_url, logo_file_id, status, created_by, updated_by)
+	        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+	        RETURNING id, name, short_name, city, country, website_url, logo_file_id, status, created_by, updated_by, created_at, updated_at, deleted_at`,
+			item.Name, item.ShortName, item.City, item.Country, item.WebsiteURL, item.LogoFileID, item.Status, item.CreatedBy)
+		result, err := scanUniversity(row)
+		if err != nil {
+			return domain.University{}, translateConstraint(err, apperror.UniversityAlreadyExists)
+		}
+		return result, insertCatalogEvent(ctx, tx, "catalog.university.created", "university", result.ID, item.CreatedBy, result)
+	})
 }
 
 // GetUniversity возвращает активный университет по ID.
@@ -108,14 +105,14 @@ func (r *Postgres) ListUniversities(ctx context.Context, options domain.ListOpti
 
 // UpdateUniversity обновляет университет и пишет outbox event.
 func (r *Postgres) UpdateUniversity(ctx context.Context, item domain.University) (domain.University, error) {
-	row := r.pool.QueryRow(ctx, `UPDATE universities SET name=$2, short_name=$3, city=$4, country=$5, website_url=$6, logo_file_id=$7, updated_by=$8, updated_at=now() WHERE id=$1 AND deleted_at IS NULL RETURNING id, name, short_name, city, country, website_url, logo_file_id, status, created_by, updated_by, created_at, updated_at, deleted_at`, item.ID, item.Name, item.ShortName, item.City, item.Country, item.WebsiteURL, item.LogoFileID, item.UpdatedBy)
-	result, err := scanUniversity(row)
-	if err != nil {
-		return domain.University{}, translateConstraint(translateNotFound(err, apperror.UniversityNotFound), apperror.UniversityAlreadyExists)
-	}
-	err = r.event(ctx, "catalog.university.updated", "university", result.ID, item.UpdatedBy, result)
-
-	return result, err
+	return writeCatalog(ctx, r.pool, func(tx pgx.Tx) (domain.University, error) {
+		row := tx.QueryRow(ctx, `UPDATE universities SET name=$2, short_name=$3, city=$4, country=$5, website_url=$6, logo_file_id=$7, updated_by=$8, updated_at=now() WHERE id=$1 AND deleted_at IS NULL RETURNING id, name, short_name, city, country, website_url, logo_file_id, status, created_by, updated_by, created_at, updated_at, deleted_at`, item.ID, item.Name, item.ShortName, item.City, item.Country, item.WebsiteURL, item.LogoFileID, item.UpdatedBy)
+		result, err := scanUniversity(row)
+		if err != nil {
+			return domain.University{}, translateConstraint(translateNotFound(err, apperror.UniversityNotFound), apperror.UniversityAlreadyExists)
+		}
+		return result, insertCatalogEvent(ctx, tx, "catalog.university.updated", "university", result.ID, item.UpdatedBy, result)
+	})
 }
 
 // DeleteUniversity выполняет soft delete университета.
@@ -125,14 +122,14 @@ func (r *Postgres) DeleteUniversity(ctx context.Context, id, actorID string) err
 
 // ChangeUniversityStatus меняет status университета и пишет outbox event.
 func (r *Postgres) ChangeUniversityStatus(ctx context.Context, id string, status domain.Status, actorID string) (domain.University, error) {
-	row := r.pool.QueryRow(ctx, `UPDATE universities SET status=$2, updated_by=$3, updated_at=now() WHERE id=$1 AND deleted_at IS NULL RETURNING id, name, short_name, city, country, website_url, logo_file_id, status, created_by, updated_by, created_at, updated_at, deleted_at`, id, status, actorID)
-	result, err := scanUniversity(row)
-	if err != nil {
-		return domain.University{}, translateConstraint(translateNotFound(err, apperror.UniversityNotFound), apperror.UniversityAlreadyExists)
-	}
-	err = r.event(ctx, "catalog.university.updated", "university", id, actorID, result)
-
-	return result, err
+	return writeCatalog(ctx, r.pool, func(tx pgx.Tx) (domain.University, error) {
+		row := tx.QueryRow(ctx, `UPDATE universities SET status=$2, updated_by=$3, updated_at=now() WHERE id=$1 AND deleted_at IS NULL RETURNING id, name, short_name, city, country, website_url, logo_file_id, status, created_by, updated_by, created_at, updated_at, deleted_at`, id, status, actorID)
+		result, err := scanUniversity(row)
+		if err != nil {
+			return domain.University{}, translateConstraint(translateNotFound(err, apperror.UniversityNotFound), apperror.UniversityAlreadyExists)
+		}
+		return result, insertCatalogEvent(ctx, tx, "catalog.university.updated", "university", id, actorID, result)
+	})
 }
 
 // CreateProgram создаёт программу, если parent university существует или не задан.
@@ -147,14 +144,14 @@ func (r *Postgres) CreateProgram(ctx context.Context, item domain.Program) (doma
 		}
 	}
 
-	row := r.pool.QueryRow(ctx, `INSERT INTO programs (university_id,name,short_name,faculty,degree_level,start_year,status,created_by,updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8) RETURNING id,university_id,name,short_name,faculty,degree_level,start_year,status,created_by,updated_by,created_at,updated_at,deleted_at`, item.UniversityID, item.Name, item.ShortName, item.Faculty, item.DegreeLevel, item.StartYear, item.Status, item.CreatedBy)
-	result, err := scanProgram(row)
-	if err != nil {
-		return domain.Program{}, translateConstraint(err, apperror.ProgramAlreadyExists)
-	}
-	err = r.event(ctx, "catalog.program.created", "program", result.ID, item.CreatedBy, result)
-
-	return result, err
+	return writeCatalog(ctx, r.pool, func(tx pgx.Tx) (domain.Program, error) {
+		row := tx.QueryRow(ctx, `INSERT INTO programs (university_id,name,short_name,faculty,degree_level,start_year,status,created_by,updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8) RETURNING id,university_id,name,short_name,faculty,degree_level,start_year,status,created_by,updated_by,created_at,updated_at,deleted_at`, item.UniversityID, item.Name, item.ShortName, item.Faculty, item.DegreeLevel, item.StartYear, item.Status, item.CreatedBy)
+		result, err := scanProgram(row)
+		if err != nil {
+			return domain.Program{}, translateConstraint(err, apperror.ProgramAlreadyExists)
+		}
+		return result, insertCatalogEvent(ctx, tx, "catalog.program.created", "program", result.ID, item.CreatedBy, result)
+	})
 }
 
 // GetProgram возвращает активную программу по ID.
@@ -192,14 +189,14 @@ func (r *Postgres) ListPrograms(ctx context.Context, parentID string, options do
 
 // UpdateProgram обновляет программу и пишет outbox event.
 func (r *Postgres) UpdateProgram(ctx context.Context, item domain.Program) (domain.Program, error) {
-	row := r.pool.QueryRow(ctx, `UPDATE programs SET name=$2,short_name=$3,faculty=$4,degree_level=$5,start_year=$6,updated_by=$7,updated_at=now() WHERE id=$1 AND deleted_at IS NULL RETURNING id,university_id,name,short_name,faculty,degree_level,start_year,status,created_by,updated_by,created_at,updated_at,deleted_at`, item.ID, item.Name, item.ShortName, item.Faculty, item.DegreeLevel, item.StartYear, item.UpdatedBy)
-	result, err := scanProgram(row)
-	if err != nil {
-		return domain.Program{}, translateConstraint(translateNotFound(err, apperror.ProgramNotFound), apperror.ProgramAlreadyExists)
-	}
-	err = r.event(ctx, "catalog.program.updated", "program", result.ID, item.UpdatedBy, result)
-
-	return result, err
+	return writeCatalog(ctx, r.pool, func(tx pgx.Tx) (domain.Program, error) {
+		row := tx.QueryRow(ctx, `UPDATE programs SET name=$2,short_name=$3,faculty=$4,degree_level=$5,start_year=$6,updated_by=$7,updated_at=now() WHERE id=$1 AND deleted_at IS NULL RETURNING id,university_id,name,short_name,faculty,degree_level,start_year,status,created_by,updated_by,created_at,updated_at,deleted_at`, item.ID, item.Name, item.ShortName, item.Faculty, item.DegreeLevel, item.StartYear, item.UpdatedBy)
+		result, err := scanProgram(row)
+		if err != nil {
+			return domain.Program{}, translateConstraint(translateNotFound(err, apperror.ProgramNotFound), apperror.ProgramAlreadyExists)
+		}
+		return result, insertCatalogEvent(ctx, tx, "catalog.program.updated", "program", result.ID, item.UpdatedBy, result)
+	})
 }
 
 // DeleteProgram выполняет soft delete программы.
@@ -209,13 +206,13 @@ func (r *Postgres) DeleteProgram(ctx context.Context, id, actorID string) error 
 
 // ChangeProgramStatus меняет status программы и пишет outbox event.
 func (r *Postgres) ChangeProgramStatus(ctx context.Context, id string, status domain.Status, actorID string) (domain.Program, error) {
-	result, err := scanProgram(r.pool.QueryRow(ctx, `UPDATE programs SET status=$2,updated_by=$3,updated_at=now() WHERE id=$1 AND deleted_at IS NULL RETURNING id,university_id,name,short_name,faculty,degree_level,start_year,status,created_by,updated_by,created_at,updated_at,deleted_at`, id, status, actorID))
-	if err != nil {
-		return domain.Program{}, translateConstraint(translateNotFound(err, apperror.ProgramNotFound), apperror.ProgramAlreadyExists)
-	}
-	err = r.event(ctx, "catalog.program.updated", "program", id, actorID, result)
-
-	return result, err
+	return writeCatalog(ctx, r.pool, func(tx pgx.Tx) (domain.Program, error) {
+		result, err := scanProgram(tx.QueryRow(ctx, `UPDATE programs SET status=$2,updated_by=$3,updated_at=now() WHERE id=$1 AND deleted_at IS NULL RETURNING id,university_id,name,short_name,faculty,degree_level,start_year,status,created_by,updated_by,created_at,updated_at,deleted_at`, id, status, actorID))
+		if err != nil {
+			return domain.Program{}, translateConstraint(translateNotFound(err, apperror.ProgramNotFound), apperror.ProgramAlreadyExists)
+		}
+		return result, insertCatalogEvent(ctx, tx, "catalog.program.updated", "program", id, actorID, result)
+	})
 }
 
 // CreateCourse создаёт курс, если parent program существует или не задан.
@@ -230,14 +227,14 @@ func (r *Postgres) CreateCourse(ctx context.Context, item domain.Course) (domain
 		}
 	}
 
-	row := r.pool.QueryRow(ctx, `INSERT INTO courses (program_id,name,slug,description,semester,year_number,status,created_by,updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8) RETURNING id,program_id,name,slug,description,semester,year_number,status,created_by,updated_by,created_at,updated_at,deleted_at`, item.ProgramID, item.Name, item.Slug, item.Description, item.Semester, item.YearNumber, item.Status, item.CreatedBy)
-	result, err := scanCourse(row)
-	if err != nil {
-		return domain.Course{}, translateConstraint(err, apperror.CourseAlreadyExists)
-	}
-	err = r.event(ctx, "catalog.course.created", "course", result.ID, item.CreatedBy, result)
-
-	return result, err
+	return writeCatalog(ctx, r.pool, func(tx pgx.Tx) (domain.Course, error) {
+		row := tx.QueryRow(ctx, `INSERT INTO courses (program_id,name,slug,description,semester,year_number,status,created_by,updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8) RETURNING id,program_id,name,slug,description,semester,year_number,status,created_by,updated_by,created_at,updated_at,deleted_at`, item.ProgramID, item.Name, item.Slug, item.Description, item.Semester, item.YearNumber, item.Status, item.CreatedBy)
+		result, err := scanCourse(row)
+		if err != nil {
+			return domain.Course{}, translateConstraint(err, apperror.CourseAlreadyExists)
+		}
+		return result, insertCatalogEvent(ctx, tx, "catalog.course.created", "course", result.ID, item.CreatedBy, result)
+	})
 }
 
 // GetCourse возвращает активный курс по ID.
@@ -275,13 +272,13 @@ func (r *Postgres) ListCourses(ctx context.Context, parentID string, options dom
 
 // UpdateCourse обновляет курс и пишет outbox event.
 func (r *Postgres) UpdateCourse(ctx context.Context, item domain.Course) (domain.Course, error) {
-	result, err := scanCourse(r.pool.QueryRow(ctx, `UPDATE courses SET name=$2,slug=$3,description=$4,semester=$5,year_number=$6,updated_by=$7,updated_at=now() WHERE id=$1 AND deleted_at IS NULL RETURNING id,program_id,name,slug,description,semester,year_number,status,created_by,updated_by,created_at,updated_at,deleted_at`, item.ID, item.Name, item.Slug, item.Description, item.Semester, item.YearNumber, item.UpdatedBy))
-	if err != nil {
-		return domain.Course{}, translateConstraint(translateNotFound(err, apperror.CourseNotFound), apperror.CourseAlreadyExists)
-	}
-	err = r.event(ctx, "catalog.course.updated", "course", result.ID, item.UpdatedBy, result)
-
-	return result, err
+	return writeCatalog(ctx, r.pool, func(tx pgx.Tx) (domain.Course, error) {
+		result, err := scanCourse(tx.QueryRow(ctx, `UPDATE courses SET name=$2,slug=$3,description=$4,semester=$5,year_number=$6,updated_by=$7,updated_at=now() WHERE id=$1 AND deleted_at IS NULL RETURNING id,program_id,name,slug,description,semester,year_number,status,created_by,updated_by,created_at,updated_at,deleted_at`, item.ID, item.Name, item.Slug, item.Description, item.Semester, item.YearNumber, item.UpdatedBy))
+		if err != nil {
+			return domain.Course{}, translateConstraint(translateNotFound(err, apperror.CourseNotFound), apperror.CourseAlreadyExists)
+		}
+		return result, insertCatalogEvent(ctx, tx, "catalog.course.updated", "course", result.ID, item.UpdatedBy, result)
+	})
 }
 
 // DeleteCourse выполняет soft delete курса.
@@ -291,13 +288,13 @@ func (r *Postgres) DeleteCourse(ctx context.Context, id, actorID string) error {
 
 // ChangeCourseStatus меняет status курса и пишет outbox event.
 func (r *Postgres) ChangeCourseStatus(ctx context.Context, id string, status domain.Status, actorID string) (domain.Course, error) {
-	result, err := scanCourse(r.pool.QueryRow(ctx, `UPDATE courses SET status=$2,updated_by=$3,updated_at=now() WHERE id=$1 AND deleted_at IS NULL RETURNING id,program_id,name,slug,description,semester,year_number,status,created_by,updated_by,created_at,updated_at,deleted_at`, id, status, actorID))
-	if err != nil {
-		return domain.Course{}, translateConstraint(translateNotFound(err, apperror.CourseNotFound), apperror.CourseAlreadyExists)
-	}
-	err = r.event(ctx, "catalog.course.updated", "course", id, actorID, result)
-
-	return result, err
+	return writeCatalog(ctx, r.pool, func(tx pgx.Tx) (domain.Course, error) {
+		result, err := scanCourse(tx.QueryRow(ctx, `UPDATE courses SET status=$2,updated_by=$3,updated_at=now() WHERE id=$1 AND deleted_at IS NULL RETURNING id,program_id,name,slug,description,semester,year_number,status,created_by,updated_by,created_at,updated_at,deleted_at`, id, status, actorID))
+		if err != nil {
+			return domain.Course{}, translateConstraint(translateNotFound(err, apperror.CourseNotFound), apperror.CourseAlreadyExists)
+		}
+		return result, insertCatalogEvent(ctx, tx, "catalog.course.updated", "course", id, actorID, result)
+	})
 }
 
 // CreateTopic создаёт тему, если parent course существует или не задан.
@@ -312,14 +309,14 @@ func (r *Postgres) CreateTopic(ctx context.Context, item domain.Topic) (domain.T
 		}
 	}
 
-	row := r.pool.QueryRow(ctx, `INSERT INTO topics (course_id,parent_topic_id,title,slug,description,order_index,difficulty,status,created_by,updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9) RETURNING id,course_id,parent_topic_id,title,slug,description,order_index,difficulty,status,created_by,updated_by,created_at,updated_at,deleted_at`, item.CourseID, item.ParentTopicID, item.Title, item.Slug, item.Description, item.OrderIndex, item.Difficulty, item.Status, item.CreatedBy)
-	result, err := scanTopic(row)
-	if err != nil {
-		return domain.Topic{}, translateConstraint(err, apperror.TopicAlreadyExists)
-	}
-	err = r.event(ctx, "catalog.topic.created", "topic", result.ID, item.CreatedBy, result)
-
-	return result, err
+	return writeCatalog(ctx, r.pool, func(tx pgx.Tx) (domain.Topic, error) {
+		row := tx.QueryRow(ctx, `INSERT INTO topics (course_id,parent_topic_id,title,slug,description,order_index,difficulty,status,created_by,updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9) RETURNING id,course_id,parent_topic_id,title,slug,description,order_index,difficulty,status,created_by,updated_by,created_at,updated_at,deleted_at`, item.CourseID, item.ParentTopicID, item.Title, item.Slug, item.Description, item.OrderIndex, item.Difficulty, item.Status, item.CreatedBy)
+		result, err := scanTopic(row)
+		if err != nil {
+			return domain.Topic{}, translateConstraint(err, apperror.TopicAlreadyExists)
+		}
+		return result, insertCatalogEvent(ctx, tx, "catalog.topic.created", "topic", result.ID, item.CreatedBy, result)
+	})
 }
 
 // GetTopic возвращает активную тему по ID.
@@ -357,13 +354,13 @@ func (r *Postgres) ListTopics(ctx context.Context, parentID string, options doma
 
 // UpdateTopic обновляет тему и пишет outbox event.
 func (r *Postgres) UpdateTopic(ctx context.Context, item domain.Topic) (domain.Topic, error) {
-	result, err := scanTopic(r.pool.QueryRow(ctx, `UPDATE topics SET parent_topic_id=$2,title=$3,slug=$4,description=$5,order_index=$6,difficulty=$7,updated_by=$8,updated_at=now() WHERE id=$1 AND deleted_at IS NULL RETURNING id,course_id,parent_topic_id,title,slug,description,order_index,difficulty,status,created_by,updated_by,created_at,updated_at,deleted_at`, item.ID, item.ParentTopicID, item.Title, item.Slug, item.Description, item.OrderIndex, item.Difficulty, item.UpdatedBy))
-	if err != nil {
-		return domain.Topic{}, translateConstraint(translateNotFound(err, apperror.TopicNotFound), apperror.TopicAlreadyExists)
-	}
-	err = r.event(ctx, "catalog.topic.updated", "topic", result.ID, item.UpdatedBy, result)
-
-	return result, err
+	return writeCatalog(ctx, r.pool, func(tx pgx.Tx) (domain.Topic, error) {
+		result, err := scanTopic(tx.QueryRow(ctx, `UPDATE topics SET parent_topic_id=$2,title=$3,slug=$4,description=$5,order_index=$6,difficulty=$7,updated_by=$8,updated_at=now() WHERE id=$1 AND deleted_at IS NULL RETURNING id,course_id,parent_topic_id,title,slug,description,order_index,difficulty,status,created_by,updated_by,created_at,updated_at,deleted_at`, item.ID, item.ParentTopicID, item.Title, item.Slug, item.Description, item.OrderIndex, item.Difficulty, item.UpdatedBy))
+		if err != nil {
+			return domain.Topic{}, translateConstraint(translateNotFound(err, apperror.TopicNotFound), apperror.TopicAlreadyExists)
+		}
+		return result, insertCatalogEvent(ctx, tx, "catalog.topic.updated", "topic", result.ID, item.UpdatedBy, result)
+	})
 }
 
 // DeleteTopic выполняет soft delete темы.
@@ -373,37 +370,39 @@ func (r *Postgres) DeleteTopic(ctx context.Context, id, actorID string) error {
 
 // ChangeTopicStatus меняет status темы и пишет outbox event.
 func (r *Postgres) ChangeTopicStatus(ctx context.Context, id string, status domain.Status, actorID string) (domain.Topic, error) {
-	result, err := scanTopic(r.pool.QueryRow(ctx, `UPDATE topics SET status=$2,updated_by=$3,updated_at=now() WHERE id=$1 AND deleted_at IS NULL RETURNING id,course_id,parent_topic_id,title,slug,description,order_index,difficulty,status,created_by,updated_by,created_at,updated_at,deleted_at`, id, status, actorID))
-	if err != nil {
-		return domain.Topic{}, translateConstraint(translateNotFound(err, apperror.TopicNotFound), apperror.TopicAlreadyExists)
-	}
-	err = r.event(ctx, "catalog.topic.updated", "topic", id, actorID, result)
-
-	return result, err
+	return writeCatalog(ctx, r.pool, func(tx pgx.Tx) (domain.Topic, error) {
+		result, err := scanTopic(tx.QueryRow(ctx, `UPDATE topics SET status=$2,updated_by=$3,updated_at=now() WHERE id=$1 AND deleted_at IS NULL RETURNING id,course_id,parent_topic_id,title,slug,description,order_index,difficulty,status,created_by,updated_by,created_at,updated_at,deleted_at`, id, status, actorID))
+		if err != nil {
+			return domain.Topic{}, translateConstraint(translateNotFound(err, apperror.TopicNotFound), apperror.TopicAlreadyExists)
+		}
+		return result, insertCatalogEvent(ctx, tx, "catalog.topic.updated", "topic", id, actorID, result)
+	})
 }
 
 // AddPrerequisite создаёт связь prerequisite и пишет outbox event.
 func (r *Postgres) AddPrerequisite(ctx context.Context, item domain.TopicPrerequisite, actorID string) (domain.TopicPrerequisite, error) {
-	err := r.pool.QueryRow(ctx, `INSERT INTO topic_prerequisites (topic_id,prerequisite_topic_id) VALUES ($1,$2) RETURNING topic_id,prerequisite_topic_id,created_at`, item.TopicID, item.PrerequisiteTopicID).Scan(&item.TopicID, &item.PrerequisiteTopicID, &item.CreatedAt)
-	if err != nil {
-		return domain.TopicPrerequisite{}, translateConstraint(err, apperror.InvalidTopicPrerequisite)
-	}
-	err = r.event(ctx, "catalog.topic.prerequisite.added", "topic", item.TopicID, actorID, item)
-
-	return item, err
+	return writeCatalog(ctx, r.pool, func(tx pgx.Tx) (domain.TopicPrerequisite, error) {
+		err := tx.QueryRow(ctx, `INSERT INTO topic_prerequisites (topic_id,prerequisite_topic_id) VALUES ($1,$2) RETURNING topic_id,prerequisite_topic_id,created_at`, item.TopicID, item.PrerequisiteTopicID).Scan(&item.TopicID, &item.PrerequisiteTopicID, &item.CreatedAt)
+		if err != nil {
+			return domain.TopicPrerequisite{}, translateConstraint(err, apperror.InvalidTopicPrerequisite)
+		}
+		return item, insertCatalogEvent(ctx, tx, "catalog.topic.prerequisite.added", "topic", item.TopicID, actorID, item)
+	})
 }
 
 // RemovePrerequisite удаляет связь prerequisite и пишет outbox event.
 func (r *Postgres) RemovePrerequisite(ctx context.Context, topicID, prerequisiteID, actorID string) error {
-	tag, err := r.pool.Exec(ctx, `DELETE FROM topic_prerequisites WHERE topic_id=$1 AND prerequisite_topic_id=$2`, topicID, prerequisiteID)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return apperror.New(apperror.InvalidTopicPrerequisite, "пререквизит не найден", 404)
-	}
+	return pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `DELETE FROM topic_prerequisites WHERE topic_id=$1 AND prerequisite_topic_id=$2`, topicID, prerequisiteID)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return apperror.New(apperror.InvalidTopicPrerequisite, "пререквизит не найден", 404)
+		}
 
-	return r.event(ctx, "catalog.topic.prerequisite.removed", "topic", topicID, actorID, map[string]string{"prerequisite_topic_id": prerequisiteID})
+		return insertCatalogEvent(ctx, tx, "catalog.topic.prerequisite.removed", "topic", topicID, actorID, map[string]string{"prerequisite_topic_id": prerequisiteID})
+	})
 }
 
 // ListPrerequisites возвращает prerequisites темы.
@@ -566,26 +565,18 @@ func (r *Postgres) softDelete(ctx context.Context, table, aggregate, id, actorID
 	}
 	// table берётся только из allowlist, поэтому fmt.Sprintf не принимает пользовательский ввод.
 	query := fmt.Sprintf("UPDATE %s SET deleted_at=now(),updated_at=now(),updated_by=$2 WHERE id=$1 AND deleted_at IS NULL", table)
-	tag, err := r.pool.Exec(ctx, query, id, actorID)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return apperror.New(code, "объект не найден", 404)
-	}
 
-	return r.event(ctx, "catalog."+aggregate+".deleted", aggregate, id, actorID, map[string]string{"id": id})
-}
+	return pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, query, id, actorID)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return apperror.New(code, "объект не найден", 404)
+		}
 
-// event записывает outbox event для будущего publisher worker.
-func (r *Postgres) event(ctx context.Context, eventType, aggregateType, aggregateID, actorID string, payload any) error {
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	_, err = r.pool.Exec(ctx, `INSERT INTO outbox_events (event_type,actor_user_id,aggregate_id,aggregate_type,payload) VALUES ($1,$2,$3,$4,$5)`, eventType, actorID, aggregateID, aggregateType, data)
-
-	return err
+		return insertCatalogEvent(ctx, tx, "catalog."+aggregate+".deleted", aggregate, id, actorID, map[string]string{"id": id})
+	})
 }
 
 // scanner описывает общий contract pgx.Row и pgx.Rows для scan helpers.

@@ -30,14 +30,31 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: entities_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - "5432"
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres -d entities_test"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-      - name: Run tests
-        run: make test
+      - name: Run tests with PostgreSQL
+        env:
+          DATABASE_URL: postgres://postgres@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/entities_test?sslmode=disable
+        run: |
+          go run ./cmd/entities migrate --dir migrations up
+          ENTITIES_TEST_DSN="$DATABASE_URL" make test
 
   build:
     name: Build

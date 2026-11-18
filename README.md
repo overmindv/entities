@@ -14,6 +14,10 @@ entities - catalog service платформы Overmindv. Он владеет у�
 - проверка существования сущностей и связки `university -> program -> course -> topic`;
 - запись catalog events в `outbox_events`.
 
+Изменение каталога и вставка события в `outbox_events` фиксируются одной
+транзакцией PostgreSQL. При ошибке outbox запись каталога откатывается.
+Kafka работает отдельно: сбой брокера не откатывает уже сохраненное событие.
+
 ## Бизнес-логика
 
 entities не хранит пользователей и роли. Write-операции доступны только actor с ролью `admin` или `superuser`, которую проверяет api-gateway по JWT Users и передаёт в entities через internal headers.
@@ -38,6 +42,13 @@ make up
 make test
 make lint
 make build
+```
+
+Чтобы проверить откат, примените миграции к выделенной БД с суффиксом
+`_test` и передайте ее DSN в `ENTITIES_TEST_DSN`:
+
+```bash
+go test -race ./internal/repository -run TestPostgresCatalogOutboxRollback -count=1
 ```
 
 Миграции на локальной БД:
