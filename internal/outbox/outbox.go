@@ -13,12 +13,16 @@ import (
 // catalogEnvelope — конверт события каталога для топика feed consumer-а.
 // Поля соответствуют колонкам outbox_events; payload сохраняется как есть.
 type catalogEnvelope struct {
-	EventType     string          `json:"event_type"`
-	OccurredAt    time.Time       `json:"occurred_at"`
-	ActorUserID   string          `json:"actor_user_id"`
-	AggregateType string          `json:"aggregate_type"`
-	AggregateID   string          `json:"aggregate_id"`
-	Payload       json.RawMessage `json:"payload"`
+	EventType        string          `json:"event_type"`
+	OccurredAt       time.Time       `json:"occurred_at"`
+	ActorUserID      string          `json:"actor_user_id"`
+	AggregateType    string          `json:"aggregate_type"`
+	AggregateID      string          `json:"aggregate_id"`
+	Payload          json.RawMessage `json:"payload"`
+	EventID          string          `json:"event_id"`
+	CatalogRevision  *int64          `json:"catalog_revision,omitempty"`
+	AggregateVersion *int64          `json:"aggregate_version,omitempty"`
+	GraphChange      json.RawMessage `json:"graph_change,omitempty"`
 }
 
 // CatalogOutbox реализует parker.Outbox поверх существующей таблицы
@@ -40,7 +44,8 @@ var _ parker.Outbox = (*CatalogOutbox)(nil) // гарантирует реали
 func (o *CatalogOutbox) FetchPending(ctx context.Context, limit int) ([]parker.OutboxRecord, error) {
 	rows, err := o.pool.Query(ctx, `
 		SELECT id::text, event_type, occurred_at, actor_user_id::text,
-		       aggregate_type, aggregate_id::text, payload
+		       aggregate_type, aggregate_id::text, payload,
+		       catalog_revision, aggregate_version, graph_change
 		FROM outbox_events
 		WHERE published_at IS NULL
 		ORDER BY occurred_at
@@ -54,25 +59,33 @@ func (o *CatalogOutbox) FetchPending(ctx context.Context, limit int) ([]parker.O
 	var records []parker.OutboxRecord
 	for rows.Next() {
 		var (
-			id            string
-			eventType     string
-			occurredAt    time.Time
-			actorUserID   string
-			aggregateType string
-			aggregateID   string
-			payload       []byte
+			id               string
+			eventType        string
+			occurredAt       time.Time
+			actorUserID      string
+			aggregateType    string
+			aggregateID      string
+			payload          []byte
+			catalogRevision  *int64
+			aggregateVersion *int64
+			graphChange      []byte
 		)
-		if err := rows.Scan(&id, &eventType, &occurredAt, &actorUserID, &aggregateType, &aggregateID, &payload); err != nil {
+		if err := rows.Scan(&id, &eventType, &occurredAt, &actorUserID, &aggregateType, &aggregateID, &payload,
+			&catalogRevision, &aggregateVersion, &graphChange); err != nil {
 			return nil, fmt.Errorf("catalog outbox scan: %w", err)
 		}
 
 		envelope, err := json.Marshal(catalogEnvelope{
-			EventType:     eventType,
-			OccurredAt:    occurredAt,
-			ActorUserID:   actorUserID,
-			AggregateType: aggregateType,
-			AggregateID:   aggregateID,
-			Payload:       payload,
+			EventType:        eventType,
+			OccurredAt:       occurredAt,
+			ActorUserID:      actorUserID,
+			AggregateType:    aggregateType,
+			AggregateID:      aggregateID,
+			Payload:          payload,
+			EventID:          id,
+			CatalogRevision:  catalogRevision,
+			AggregateVersion: aggregateVersion,
+			GraphChange:      graphChange,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("catalog outbox marshal: %w", err)

@@ -4,6 +4,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/overmindv/entities/internal/catalogsnapshot"
 	"github.com/overmindv/entities/internal/httpapi"
 	"github.com/overmindv/entities/internal/outbox"
 	"github.com/overmindv/entities/internal/repository"
@@ -29,6 +30,9 @@ func run(app *parker.App) error {
 	store := repository.New(pool)
 	catalog := service.New(store)
 	httpapi.Register(app.HTTP(), catalog, app.Logger())
+	if err := httpapi.RegisterCatalogSnapshot(app.HTTP(), catalogsnapshot.New(pool), os.Getenv("ENTITIES_SNAPSHOT_TOKEN")); err != nil {
+		return err
+	}
 
 	producer, err := app.NewProducer() // из parker opts (KAFKA_BOOTSTRAP_SERVERS)
 	if err != nil {
