@@ -14,7 +14,9 @@ import (
 	"github.com/overmindv/entities/internal/service"
 )
 
+//nolint:paralleltest // тест последовательно меняет общий каталог в component-БД
 func TestCatalogVisibilityPublicAndAdmin(t *testing.T) {
+	const emptyJSON = "[]"
 	ctx := t.Context()
 	admin := New(testCatalogPool(t, ""))
 	actor, suffix := uuid.NewString(), uuid.NewString()
@@ -48,7 +50,7 @@ func TestCatalogVisibilityPublicAndAdmin(t *testing.T) {
 	}
 	makeTopic := func(name string, parent *string, status domain.Status) domain.Topic {
 		t.Helper()
-		topic, err := admin.CreateTopic(ctx, domain.Topic{
+		topic, createErr := admin.CreateTopic(ctx, domain.Topic{
 			CourseID:      &course.ID,
 			ParentTopicID: parent,
 			Title:         suffix + " " + name,
@@ -57,8 +59,8 @@ func TestCatalogVisibilityPublicAndAdmin(t *testing.T) {
 			Status:        status,
 			CreatedBy:     actor,
 		})
-		if err != nil {
-			t.Fatal(err)
+		if createErr != nil {
+			t.Fatal(createErr)
 		}
 
 		return topic
@@ -68,18 +70,18 @@ func TestCatalogVisibilityPublicAndAdmin(t *testing.T) {
 	child := makeTopic("child", &middle.ID, domain.StatusActive)
 	draft := makeTopic("draft", nil, domain.StatusDraft)
 	for _, id := range []string{root.ID, draft.ID} {
-		if _, err := admin.AddPrerequisite(ctx, domain.TopicPrerequisite{
+		if _, prerequisiteErr := admin.AddPrerequisite(ctx, domain.TopicPrerequisite{
 			TopicID:             child.ID,
 			PrerequisiteTopicID: id,
-		}, actor); err != nil {
-			t.Fatal(err)
+		}, actor); prerequisiteErr != nil {
+			t.Fatal(prerequisiteErr)
 		}
 	}
 	const topicURL = "/v1/topics/"
 	mux := http.NewServeMux()
 	token := strings.Repeat("t", 32)
-	if err := httpapi.Register(mux, service.New(admin), service.New(admin.PublicReads()), token, slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
-		t.Fatal(err)
+	if registerErr := httpapi.Register(mux, service.New(admin), service.New(admin.PublicReads()), token, slog.New(slog.NewTextHandler(io.Discard, nil))); registerErr != nil {
+		t.Fatal(registerErr)
 	}
 	do := func(path string, headers func(http.Header)) (int, string) {
 		t.Helper()
@@ -128,25 +130,25 @@ func TestCatalogVisibilityPublicAndAdmin(t *testing.T) {
 	if code != http.StatusOK || !strings.Contains(prerequisites, root.ID) || strings.Contains(prerequisites, draft.ID) {
 		t.Error("public prerequisites expose draft or omit active target", code, prerequisites)
 	}
-	if _, err := admin.ChangeTopicStatus(ctx, root.ID, domain.StatusHidden, actor); err != nil {
-		t.Fatal(err)
+	if _, changeErr := admin.ChangeTopicStatus(ctx, root.ID, domain.StatusHidden, actor); changeErr != nil {
+		t.Fatal(changeErr)
 	}
 	assertStatus(topicURL+child.ID, nil, http.StatusNotFound)
 	assertStatus(topicURL+child.ID, trusted, http.StatusOK)
 	assertStatus("/v1/validate/topics/"+child.ID, nil, http.StatusNotFound)
-	if found, err := admin.PublicReads().ValidateBinding(ctx, domain.Binding{TopicID: &child.ID}); err != nil || found {
-		t.Error("hidden binding confirmed", found, err)
+	if found, bindingErr := admin.PublicReads().ValidateBinding(ctx, domain.Binding{TopicID: &child.ID}); bindingErr != nil || found {
+		t.Error("hidden binding confirmed", found, bindingErr)
 	}
 	code, results := do("/v1/topics?course_id="+course.ID+"&search="+suffix+"&status=active&limit=1", nil)
-	if code != http.StatusOK || strings.TrimSpace(results) != "[]" {
+	if code != http.StatusOK || strings.TrimSpace(results) != emptyJSON {
 		t.Error("hidden topic in search", code, results)
 	}
 	code, tree := do("/v1/courses/"+course.ID+"/topic-tree", nil)
-	if code != http.StatusOK || strings.TrimSpace(tree) != "[]" {
+	if code != http.StatusOK || strings.TrimSpace(tree) != emptyJSON {
 		t.Error("hidden descendants in tree", code, tree)
 	}
-	if _, err := admin.ChangeTopicStatus(ctx, root.ID, domain.StatusActive, actor); err != nil {
-		t.Fatal(err)
+	if _, changeErr := admin.ChangeTopicStatus(ctx, root.ID, domain.StatusActive, actor); changeErr != nil {
+		t.Fatal(changeErr)
 	}
 	backlog, err := admin.CreateTopic(ctx, domain.Topic{
 		Title:      "Backlog",

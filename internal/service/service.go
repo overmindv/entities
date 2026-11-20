@@ -289,6 +289,7 @@ func BuildTopicTree(topics []domain.Topic) []*domain.TopicTreeNode {
 		node := nodes[topic.ID]
 		if topic.ParentTopicID == nil || nodes[*topic.ParentTopicID] == nil {
 			roots = append(roots, node)
+
 			continue
 		}
 		parent := nodes[*topic.ParentTopicID]
@@ -321,6 +322,7 @@ func Slug(value, fallback string) string {
 			return unicode.ToLower(r)
 		}
 		replacements := map[rune]rune{'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'e', 'ж': 'z', 'з': 'z', 'и': 'i', 'й': 'i', 'к': 'k', 'л': 'l', 'м': 'm', 'н': 'n', 'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u', 'ф': 'f', 'х': 'h', 'ц': 'c', 'ч': 'c', 'ш': 's', 'щ': 's', 'ы': 'y', 'э': 'e', 'ю': 'u', 'я': 'a'}
+
 		return replacements[unicode.ToLower(r)]
 	}, source)
 	result := strings.Trim(nonSlug.ReplaceAllString(transliterated, "-"), "-")
@@ -396,21 +398,25 @@ func defaultStatus(status domain.Status) domain.Status {
 
 // defaultDegree возвращает допустимый degree_level или other по умолчанию.
 func defaultDegree(value string) string {
+	const fallback = "other"
+
 	switch value {
-	case "bachelor", "master", "specialist", "phd", "other":
+	case "bachelor", "master", "specialist", "phd", fallback:
 		return value
 	default:
-		return "other"
+		return fallback
 	}
 }
 
 // defaultDifficulty возвращает допустимую difficulty или basic по умолчанию.
 func defaultDifficulty(value string) string {
+	const fallback = "basic"
+
 	switch value {
-	case "intro", "basic", "medium", "hard", "advanced":
+	case "intro", fallback, "medium", "hard", "advanced":
 		return value
 	default:
-		return "basic"
+		return fallback
 	}
 }
 

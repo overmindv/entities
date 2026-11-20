@@ -36,6 +36,7 @@ func RegisterCatalogSnapshot(router Router, store CatalogSnapshotStore, token st
 			values := r.Header.Values("Authorization")
 			if len(values) != 1 || !bearerAuthorized(values[0], expected) {
 				writeJSON(w, http.StatusForbidden, apperror.New(apperror.PermissionDenied, "доступ запрещен", http.StatusForbidden))
+
 				return
 			}
 			endpoint.ServeHTTP(w, r)
@@ -45,6 +46,7 @@ func RegisterCatalogSnapshot(router Router, store CatalogSnapshotStore, token st
 		values, limit, watermark, err := catalogPageQuery(r, "cursor")
 		if err != nil {
 			writeCatalogPage(w, nil, err)
+
 			return
 		}
 		result, err := store.Snapshot(r.Context(), catalogsnapshot.SnapshotRequest{
@@ -58,11 +60,13 @@ func RegisterCatalogSnapshot(router Router, store CatalogSnapshotStore, token st
 		values, limit, watermark, err := catalogPageQuery(r, "after")
 		if err != nil {
 			writeCatalogPage(w, nil, err)
+
 			return
 		}
 		after, err := parseRevision(values.Get("after"))
 		if err != nil {
 			writeCatalogPage(w, nil, err)
+
 			return
 		}
 		result, err := store.Changes(r.Context(), catalogsnapshot.ChangeRequest{

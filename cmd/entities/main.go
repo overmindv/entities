@@ -35,11 +35,11 @@ func run(app *parker.App) error {
 	if gatewayToken != "" && gatewayToken == snapshotToken {
 		return errors.New("ENTITIES_GATEWAY_TOKEN must differ from ENTITIES_SNAPSHOT_TOKEN")
 	}
-	if err := httpapi.Register(app.HTTP(), catalog, service.New(store.PublicReads()), gatewayToken, app.Logger()); err != nil {
-		return err
+	if registerErr := httpapi.Register(app.HTTP(), catalog, service.New(store.PublicReads()), gatewayToken, app.Logger()); registerErr != nil {
+		return registerErr
 	}
-	if err := httpapi.RegisterCatalogSnapshot(app.HTTP(), catalogsnapshot.New(pool), snapshotToken); err != nil {
-		return err
+	if registerErr := httpapi.RegisterCatalogSnapshot(app.HTTP(), catalogsnapshot.New(pool), snapshotToken); registerErr != nil {
+		return registerErr
 	}
 
 	producer, err := app.NewProducer() // из parker opts (KAFKA_BOOTSTRAP_SERVERS)
@@ -52,6 +52,7 @@ func run(app *parker.App) error {
 		outbox.NewCatalogOutbox(pool, env("KAFKA_CATALOG_ACTIVITY_TOPIC", "catalog.activity.v1")),
 		producer, time.Second, app.Logger())
 	app.AddRunnable("catalog-events-outbox", dispatcher.Run)
+
 	return nil
 }
 
@@ -60,5 +61,6 @@ func env(key, fallback string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
 	}
+
 	return fallback
 }
