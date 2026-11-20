@@ -16,7 +16,8 @@ import (
 
 // Postgres реализует storage contract Entities поверх PostgreSQL.
 type Postgres struct {
-	pool *pgxpool.Pool
+	pool        *pgxpool.Pool
+	publicReads bool
 }
 
 // New создаёт PostgreSQL repository с готовым pgx pool.
@@ -24,6 +25,21 @@ func New(pool *pgxpool.Pool) *Postgres {
 	return &Postgres{
 		pool: pool,
 	}
+}
+
+func (r *Postgres) PublicReads() *Postgres {
+	return &Postgres{
+		pool:        r.pool,
+		publicReads: true,
+	}
+}
+
+func (r *Postgres) readTable(name string) string {
+	if r.publicReads {
+		return "catalog_public_" + name
+	}
+
+	return name
 }
 
 // Ping проверяет доступность PostgreSQL.
@@ -49,7 +65,7 @@ func (r *Postgres) CreateUniversity(ctx context.Context, item domain.University)
 
 // GetUniversity возвращает активный университет по ID.
 func (r *Postgres) GetUniversity(ctx context.Context, id string) (domain.University, error) {
-	row := r.pool.QueryRow(ctx, `SELECT id, name, short_name, city, country, website_url, logo_file_id, status, created_by, updated_by, created_at, updated_at, deleted_at FROM universities WHERE id = $1 AND deleted_at IS NULL`, id)
+	row := r.pool.QueryRow(ctx, `SELECT id, name, short_name, city, country, website_url, logo_file_id, status, created_by, updated_by, created_at, updated_at, deleted_at FROM `+r.readTable("universities")+` WHERE id = $1 AND deleted_at IS NULL`, id)
 	item, err := scanUniversity(row)
 
 	return item, translateNotFound(err, apperror.UniversityNotFound)
@@ -70,7 +86,7 @@ func (r *Postgres) ListUniversities(ctx context.Context, options domain.ListOpti
 	createdAt := postgres.TimestampzColumn("created_at")
 	updatedAt := postgres.TimestampzColumn("updated_at")
 	deletedAt := postgres.TimestampzColumn("deleted_at")
-	table := postgres.NewTable("", "universities", "", id, name, shortName, city, country, websiteURL, logoFileID, status, createdBy, updatedBy, createdAt, updatedAt, deletedAt)
+	table := postgres.NewTable("", r.readTable("universities"), "", id, name, shortName, city, country, websiteURL, logoFileID, status, createdBy, updatedBy, createdAt, updatedAt, deletedAt)
 	condition := deletedAt.IS_NULL()
 	if options.Status != "" {
 		condition = condition.AND(status.EQ(postgres.String(options.Status)))
@@ -82,7 +98,7 @@ func (r *Postgres) ListUniversities(ctx context.Context, options domain.ListOpti
 	statement := postgres.SELECT(id, name, shortName, city, country, websiteURL, logoFileID, status, createdBy, updatedBy, createdAt, updatedAt, deletedAt).
 		FROM(table).
 		WHERE(condition).
-		ORDER_BY(name.ASC()).
+		ORDER_BY(name.ASC(), id.ASC()).
 		LIMIT(int64(options.Limit)).
 		OFFSET(int64(options.Offset))
 	query, args := statement.Sql()
@@ -156,17 +172,18 @@ func (r *Postgres) CreateProgram(ctx context.Context, item domain.Program) (doma
 
 // GetProgram возвращает активную программу по ID.
 func (r *Postgres) GetProgram(ctx context.Context, id string) (domain.Program, error) {
-	item, err := scanProgram(r.pool.QueryRow(ctx, `SELECT id,university_id,name,short_name,faculty,degree_level,start_year,status,created_by,updated_by,created_at,updated_at,deleted_at FROM programs WHERE id=$1 AND deleted_at IS NULL`, id))
+	item, err := scanProgram(r.pool.QueryRow(ctx, `SELECT id,university_id,name,short_name,faculty,degree_level,start_year,status,created_by,updated_by,created_at,updated_at,deleted_at FROM `+r.readTable("programs")+` WHERE id=$1 AND deleted_at IS NULL`, id))
 
 	return item, translateNotFound(err, apperror.ProgramNotFound)
 }
 
 // ListPrograms возвращает активные программы parent university или общий список.
 func (r *Postgres) ListPrograms(ctx context.Context, parentID string, options domain.ListOptions) ([]domain.Program, error) {
-	query := `SELECT id,university_id,name,short_name,faculty,degree_level,start_year,status,created_by,updated_by,created_at,updated_at,deleted_at FROM programs WHERE deleted_at IS NULL AND ($1='' OR status::text=$1) AND ($2='' OR name ILIKE '%'||$2||'%') ORDER BY name LIMIT $3 OFFSET $4`
+	const selectProgram = `SELECT id,university_id,name,short_name,faculty,degree_level,start_year,status,created_by,updated_by,created_at,updated_at,deleted_at FROM `
+	query := selectProgram + r.readTable("programs") + ` WHERE deleted_at IS NULL AND ($1='' OR status::text=$1) AND ($2='' OR name ILIKE '%'||$2||'%') ORDER BY name,id LIMIT $3 OFFSET $4`
 	args := []any{options.Status, options.Search, options.Limit, options.Offset}
 	if strings.TrimSpace(parentID) != "" {
-		query = `SELECT id,university_id,name,short_name,faculty,degree_level,start_year,status,created_by,updated_by,created_at,updated_at,deleted_at FROM programs WHERE university_id=$1::uuid AND deleted_at IS NULL AND ($2='' OR status::text=$2) AND ($3='' OR name ILIKE '%'||$3||'%') ORDER BY name LIMIT $4 OFFSET $5`
+		query = selectProgram + r.readTable("programs") + ` WHERE university_id=$1::uuid AND deleted_at IS NULL AND ($2='' OR status::text=$2) AND ($3='' OR name ILIKE '%'||$3||'%') ORDER BY name,id LIMIT $4 OFFSET $5`
 		args = []any{parentID, options.Status, options.Search, options.Limit, options.Offset}
 	}
 
@@ -239,17 +256,18 @@ func (r *Postgres) CreateCourse(ctx context.Context, item domain.Course) (domain
 
 // GetCourse возвращает активный курс по ID.
 func (r *Postgres) GetCourse(ctx context.Context, id string) (domain.Course, error) {
-	item, err := scanCourse(r.pool.QueryRow(ctx, `SELECT id,program_id,name,slug,description,semester,year_number,status,created_by,updated_by,created_at,updated_at,deleted_at FROM courses WHERE id=$1 AND deleted_at IS NULL`, id))
+	item, err := scanCourse(r.pool.QueryRow(ctx, `SELECT id,program_id,name,slug,description,semester,year_number,status,created_by,updated_by,created_at,updated_at,deleted_at FROM `+r.readTable("courses")+` WHERE id=$1 AND deleted_at IS NULL`, id))
 
 	return item, translateNotFound(err, apperror.CourseNotFound)
 }
 
 // ListCourses возвращает активные курсы parent program или общий список.
 func (r *Postgres) ListCourses(ctx context.Context, parentID string, options domain.ListOptions) ([]domain.Course, error) {
-	query := `SELECT id,program_id,name,slug,description,semester,year_number,status,created_by,updated_by,created_at,updated_at,deleted_at FROM courses WHERE deleted_at IS NULL AND ($1='' OR status::text=$1) AND ($2='' OR name ILIKE '%'||$2||'%') ORDER BY name LIMIT $3 OFFSET $4`
+	const selectCourse = `SELECT id,program_id,name,slug,description,semester,year_number,status,created_by,updated_by,created_at,updated_at,deleted_at FROM `
+	query := selectCourse + r.readTable("courses") + ` WHERE deleted_at IS NULL AND ($1='' OR status::text=$1) AND ($2='' OR name ILIKE '%'||$2||'%') ORDER BY name,id LIMIT $3 OFFSET $4`
 	args := []any{options.Status, options.Search, options.Limit, options.Offset}
 	if strings.TrimSpace(parentID) != "" {
-		query = `SELECT id,program_id,name,slug,description,semester,year_number,status,created_by,updated_by,created_at,updated_at,deleted_at FROM courses WHERE program_id=$1::uuid AND deleted_at IS NULL AND ($2='' OR status::text=$2) AND ($3='' OR name ILIKE '%'||$3||'%') ORDER BY name LIMIT $4 OFFSET $5`
+		query = selectCourse + r.readTable("courses") + ` WHERE program_id=$1::uuid AND deleted_at IS NULL AND ($2='' OR status::text=$2) AND ($3='' OR name ILIKE '%'||$3||'%') ORDER BY name,id LIMIT $4 OFFSET $5`
 		args = []any{parentID, options.Status, options.Search, options.Limit, options.Offset}
 	}
 
@@ -321,17 +339,34 @@ func (r *Postgres) CreateTopic(ctx context.Context, item domain.Topic) (domain.T
 
 // GetTopic возвращает активную тему по ID.
 func (r *Postgres) GetTopic(ctx context.Context, id string) (domain.Topic, error) {
-	item, err := scanTopic(r.pool.QueryRow(ctx, `SELECT id,course_id,parent_topic_id,title,slug,description,order_index,difficulty,status,created_by,updated_by,created_at,updated_at,deleted_at FROM topics WHERE id=$1 AND deleted_at IS NULL`, id))
+	item, err := scanTopic(r.pool.QueryRow(ctx, `SELECT id,course_id,parent_topic_id,title,slug,description,order_index,difficulty,status,created_by,updated_by,created_at,updated_at,deleted_at FROM `+r.readTable("topics")+` WHERE id=$1 AND deleted_at IS NULL`, id))
 
 	return item, translateNotFound(err, apperror.TopicNotFound)
 }
 
 // ListTopics возвращает активные темы parent course или общий список.
 func (r *Postgres) ListTopics(ctx context.Context, parentID string, options domain.ListOptions) ([]domain.Topic, error) {
-	query := `SELECT id,course_id,parent_topic_id,title,slug,description,order_index,difficulty,status,created_by,updated_by,created_at,updated_at,deleted_at FROM topics WHERE deleted_at IS NULL AND ($1='' OR status::text=$1) AND ($2='' OR title ILIKE '%'||$2||'%') ORDER BY order_index,title LIMIT $3 OFFSET $4`
+	const selectTopic = `SELECT t.id,t.course_id,t.parent_topic_id,t.title,t.slug,t.description,t.order_index,t.difficulty,t.status,t.created_by,t.updated_by,t.created_at,t.updated_at,t.deleted_at FROM `
+	query := selectTopic + r.readTable("topics") + ` t WHERE deleted_at IS NULL AND ($1='' OR status::text=$1) AND ($2='' OR title ILIKE '%'||$2||'%') ORDER BY order_index,title,id LIMIT $3 OFFSET $4`
 	args := []any{options.Status, options.Search, options.Limit, options.Offset}
 	if strings.TrimSpace(parentID) != "" {
-		query = `SELECT id,course_id,parent_topic_id,title,slug,description,order_index,difficulty,status,created_by,updated_by,created_at,updated_at,deleted_at FROM topics WHERE course_id=$1::uuid AND deleted_at IS NULL AND ($2='' OR status::text=$2) AND ($3='' OR title ILIKE '%'||$3||'%') ORDER BY order_index,title LIMIT $4 OFFSET $5`
+		query = selectTopic + `topics t WHERE course_id=$1::uuid AND deleted_at IS NULL AND ($2='' OR status::text=$2) AND ($3='' OR title ILIKE '%'||$3||'%') ORDER BY order_index,title,id LIMIT $4 OFFSET $5`
+		if r.publicReads {
+			// Обход от корней не включает циклы и потомков скрытого родителя.
+			query = `WITH RECURSIVE visible AS (
+				SELECT * FROM topics
+				 WHERE course_id=$1 AND parent_topic_id IS NULL AND status='active' AND deleted_at IS NULL
+				   AND EXISTS (SELECT 1 FROM catalog_public_courses WHERE id=$1)
+				UNION ALL
+				SELECT child.* FROM visible v JOIN LATERAL (
+					SELECT * FROM topics
+					 WHERE course_id=$1 AND parent_topic_id=v.id AND status='active' AND deleted_at IS NULL
+					 OFFSET 0
+				) child ON TRUE
+			) ` + selectTopic + `visible t
+				WHERE ($2='' OR $2='active') AND ($3='' OR t.title ILIKE '%'||$3||'%')
+				ORDER BY t.order_index,t.title,t.id LIMIT $4 OFFSET $5`
+		}
 		args = []any{parentID, options.Status, options.Search, options.Limit, options.Offset}
 	}
 
@@ -407,7 +442,12 @@ func (r *Postgres) RemovePrerequisite(ctx context.Context, topicID, prerequisite
 
 // ListPrerequisites возвращает prerequisites темы.
 func (r *Postgres) ListPrerequisites(ctx context.Context, topicID string) ([]domain.TopicPrerequisite, error) {
-	rows, err := r.pool.Query(ctx, `SELECT topic_id,prerequisite_topic_id,created_at FROM topic_prerequisites WHERE topic_id=$1 ORDER BY created_at`, topicID)
+	query := `SELECT edge.topic_id,edge.prerequisite_topic_id,edge.created_at FROM topic_prerequisites AS edge WHERE edge.topic_id=$1`
+	if r.publicReads {
+		query += ` AND EXISTS (SELECT 1 FROM catalog_public_topics t WHERE t.id = edge.topic_id)
+		           AND EXISTS (SELECT 1 FROM catalog_public_topics t WHERE t.id = edge.prerequisite_topic_id)`
+	}
+	rows, err := r.pool.Query(ctx, query+` ORDER BY created_at,prerequisite_topic_id`, topicID)
 	if err != nil {
 		return nil, err
 	}
@@ -481,7 +521,7 @@ func (r *Postgres) ValidateBinding(ctx context.Context, binding domain.Binding) 
 // activeUniversityExists проверяет, что университет существует и не удалён.
 func (r *Postgres) activeUniversityExists(ctx context.Context, id string) (bool, error) {
 	var exists bool
-	err := r.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM universities WHERE id=$1 AND deleted_at IS NULL)`, id).Scan(&exists)
+	err := r.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+r.readTable("universities")+` WHERE id=$1 AND deleted_at IS NULL)`, id).Scan(&exists)
 
 	return exists, err
 }
@@ -505,7 +545,7 @@ func (r *Postgres) activeCourseExists(ctx context.Context, id string) (bool, err
 // activeProgramUniversityID возвращает university_id активной программы.
 func (r *Postgres) activeProgramUniversityID(ctx context.Context, id string) (*string, bool, error) {
 	var parentID *string
-	if err := r.pool.QueryRow(ctx, `SELECT university_id FROM programs WHERE id=$1 AND deleted_at IS NULL`, id).Scan(&parentID); err != nil {
+	if err := r.pool.QueryRow(ctx, `SELECT university_id FROM `+r.readTable("programs")+` WHERE id=$1 AND deleted_at IS NULL`, id).Scan(&parentID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, false, nil
 		}
@@ -519,7 +559,7 @@ func (r *Postgres) activeProgramUniversityID(ctx context.Context, id string) (*s
 // activeCourseProgramID возвращает program_id активного курса.
 func (r *Postgres) activeCourseProgramID(ctx context.Context, id string) (*string, bool, error) {
 	var parentID *string
-	if err := r.pool.QueryRow(ctx, `SELECT program_id FROM courses WHERE id=$1 AND deleted_at IS NULL`, id).Scan(&parentID); err != nil {
+	if err := r.pool.QueryRow(ctx, `SELECT program_id FROM `+r.readTable("courses")+` WHERE id=$1 AND deleted_at IS NULL`, id).Scan(&parentID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, false, nil
 		}
@@ -533,7 +573,7 @@ func (r *Postgres) activeCourseProgramID(ctx context.Context, id string) (*strin
 // activeTopicCourseID возвращает course_id активной темы.
 func (r *Postgres) activeTopicCourseID(ctx context.Context, id string) (*string, bool, error) {
 	var parentID *string
-	if err := r.pool.QueryRow(ctx, `SELECT course_id FROM topics WHERE id=$1 AND deleted_at IS NULL`, id).Scan(&parentID); err != nil {
+	if err := r.pool.QueryRow(ctx, `SELECT course_id FROM `+r.readTable("topics")+` WHERE id=$1 AND deleted_at IS NULL`, id).Scan(&parentID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, false, nil
 		}

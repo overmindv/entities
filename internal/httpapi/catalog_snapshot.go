@@ -24,7 +24,7 @@ func RegisterCatalogSnapshot(router Router, store CatalogSnapshotStore, token st
 	if token == "" {
 		return nil
 	}
-	if len(token) < 32 || len(token) > 512 || strings.ContainsFunc(token, func(r rune) bool { return r < 0x21 || r > 0x7e }) {
+	if !validServiceToken(token) {
 		return errors.New("ENTITIES_SNAPSHOT_TOKEN must contain 32-512 printable ASCII characters without spaces")
 	}
 	expected := sha256.Sum256([]byte(token))
@@ -34,7 +34,7 @@ func RegisterCatalogSnapshot(router Router, store CatalogSnapshotStore, token st
 			w.Header().Set("Cache-Control", "no-store")
 			w.Header().Set("Content-Type", "application/json")
 			values := r.Header.Values("Authorization")
-			if len(values) != 1 || !snapshotAuthorized(values[0], expected) {
+			if len(values) != 1 || !bearerAuthorized(values[0], expected) {
 				writeJSON(w, http.StatusForbidden, apperror.New(apperror.PermissionDenied, "доступ запрещен", http.StatusForbidden))
 				return
 			}
@@ -76,7 +76,11 @@ func RegisterCatalogSnapshot(router Router, store CatalogSnapshotStore, token st
 	return nil
 }
 
-func snapshotAuthorized(header string, expected [sha256.Size]byte) bool {
+func validServiceToken(token string) bool {
+	return len(token) >= 32 && len(token) <= 512 && !strings.ContainsFunc(token, func(r rune) bool { return r < 0x21 || r > 0x7e })
+}
+
+func bearerAuthorized(header string, expected [sha256.Size]byte) bool {
 	token, ok := strings.CutPrefix(header, "Bearer ")
 	if !ok || len(token) > 512 {
 		return false

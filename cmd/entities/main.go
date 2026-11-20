@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"time"
 
@@ -29,8 +30,15 @@ func run(app *parker.App) error {
 
 	store := repository.New(pool)
 	catalog := service.New(store)
-	httpapi.Register(app.HTTP(), catalog, app.Logger())
-	if err := httpapi.RegisterCatalogSnapshot(app.HTTP(), catalogsnapshot.New(pool), os.Getenv("ENTITIES_SNAPSHOT_TOKEN")); err != nil {
+	gatewayToken := os.Getenv("ENTITIES_GATEWAY_TOKEN")
+	snapshotToken := os.Getenv("ENTITIES_SNAPSHOT_TOKEN")
+	if gatewayToken != "" && gatewayToken == snapshotToken {
+		return errors.New("ENTITIES_GATEWAY_TOKEN must differ from ENTITIES_SNAPSHOT_TOKEN")
+	}
+	if err := httpapi.Register(app.HTTP(), catalog, service.New(store.PublicReads()), gatewayToken, app.Logger()); err != nil {
+		return err
+	}
+	if err := httpapi.RegisterCatalogSnapshot(app.HTTP(), catalogsnapshot.New(pool), snapshotToken); err != nil {
 		return err
 	}
 

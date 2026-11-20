@@ -189,6 +189,11 @@ func (s *Service) UpdateTopic(ctx context.Context, item domain.Topic, actorID st
 
 // TopicTree возвращает дерево тем для курса или общий backlog-лес без course_id.
 func (s *Service) TopicTree(ctx context.Context, courseID string) ([]*domain.TopicTreeNode, error) {
+	if courseID != "" {
+		if _, err := s.store.GetCourse(ctx, courseID); err != nil {
+			return nil, err
+		}
+	}
 	topics, err := s.store.ListTopics(ctx, courseID, domain.ListOptions{Limit: 10000})
 	if err != nil {
 		return nil, err

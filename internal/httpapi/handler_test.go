@@ -3,11 +3,13 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/overmindv/entities/internal/domain"
@@ -63,12 +65,15 @@ func TestAdminAllowsAdminAndSuperuserRoles(t *testing.T) {
 		},
 	}
 
-	handler := &Handler{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	token := strings.Repeat("a", 32)
+	expected := sha256.Sum256([]byte(token))
+	handler := &Handler{gatewayToken: &expected, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, "/v1/universities", nil)
 			request.Header.Set("X-User-ID", "11111111-1111-1111-1111-111111111111")
 			request.Header.Set("X-User-Roles", test.roles)
+			request.Header.Set("Authorization", "Bearer "+token)
 			recorder := httptest.NewRecorder()
 
 			actor, ok := handler.admin(recorder, request)
@@ -86,10 +91,13 @@ func TestAdminAllowsAdminAndSuperuserRoles(t *testing.T) {
 func TestAdminRejectsNonUUIDActor(t *testing.T) {
 	t.Parallel()
 
-	handler := &Handler{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	token := strings.Repeat("a", 32)
+	expected := sha256.Sum256([]byte(token))
+	handler := &Handler{gatewayToken: &expected, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	request := httptest.NewRequest(http.MethodPost, "/v1/universities", nil)
 	request.Header.Set("X-User-ID", "admin-id")
 	request.Header.Set("X-User-Roles", "admin")
+	request.Header.Set("Authorization", "Bearer "+token)
 	recorder := httptest.NewRecorder()
 
 	if _, ok := handler.admin(recorder, request); ok {
@@ -103,7 +111,10 @@ func TestCreateEndpointsAcceptAdminAndEmptyOptionalUUIDs(t *testing.T) {
 
 	store := &catalogCreateStore{}
 	mux := http.NewServeMux()
-	Register(mux, service.New(store), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	token := strings.Repeat("a", 32)
+	if err := Register(mux, service.New(store), service.New(store), token, slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
+		t.Fatal(err)
+	}
 	handler := mux
 
 	university := postCatalogJSON(t, handler, "/v1/universities", map[string]any{"name": "University", "logo_file_id": ""})
@@ -134,6 +145,7 @@ func postCatalogJSON(t *testing.T, handler http.Handler, path string, payload an
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-User-ID", "11111111-1111-1111-1111-111111111111")
 	request.Header.Set("X-User-Roles", "admin")
+	request.Header.Set("Authorization", "Bearer "+strings.Repeat("a", 32))
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
 

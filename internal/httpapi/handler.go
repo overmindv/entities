@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -23,16 +24,26 @@ type Router interface {
 
 // Handler обслуживает внутренний HTTP JSON API Entities.
 type Handler struct {
-	service *service.Service
-	logger  *slog.Logger
+	service      *service.Service
+	public       *service.Service
+	gatewayToken *[sha256.Size]byte
+	logger       *slog.Logger
 }
 
 // Register регистрирует бизнес-роуты Entities на роутер parker.
 // health/ready/request-id/access-log/metrics предоставляет parker.
-func Register(router Router, catalog *service.Service, logger *slog.Logger) {
+func Register(router Router, catalog, public *service.Service, gatewayToken string, logger *slog.Logger) error {
 	handler := &Handler{
 		service: catalog,
+		public:  public,
 		logger:  logger,
+	}
+	if gatewayToken != "" {
+		if !validServiceToken(gatewayToken) {
+			return errors.New("ENTITIES_GATEWAY_TOKEN must contain 32-512 printable ASCII characters without spaces")
+		}
+		tokenHash := sha256.Sum256([]byte(gatewayToken))
+		handler.gatewayToken = &tokenHash
 	}
 	router.HandleFunc("GET /v1/universities", handler.listUniversities)
 	router.HandleFunc("POST /v1/universities", handler.createUniversity)
@@ -65,6 +76,8 @@ func Register(router Router, catalog *service.Service, logger *slog.Logger) {
 	router.HandleFunc("DELETE /v1/topics/{id}/prerequisites/{prerequisite_id}", handler.removePrerequisite)
 	router.HandleFunc("GET /v1/validate/{entity}/{id}", handler.validateEntity)
 	router.HandleFunc("POST /v1/validate/binding", handler.validateBinding)
+
+	return nil
 }
 
 // createUniversity создаёт университет после проверки роли admin/superuser.
@@ -83,13 +96,13 @@ func (h *Handler) createUniversity(w http.ResponseWriter, r *http.Request) {
 
 // getUniversity возвращает университет по ID.
 func (h *Handler) getUniversity(w http.ResponseWriter, r *http.Request) {
-	result, err := h.service.Store().GetUniversity(r.Context(), r.PathValue("id"))
+	result, err := h.readCatalog(w, r).Store().GetUniversity(r.Context(), r.PathValue("id"))
 	h.respond(w, http.StatusOK, result, err)
 }
 
 // listUniversities возвращает список университетов с фильтрами.
 func (h *Handler) listUniversities(w http.ResponseWriter, r *http.Request) {
-	result, err := h.service.Store().ListUniversities(r.Context(), listOptions(r))
+	result, err := h.readCatalog(w, r).Store().ListUniversities(r.Context(), listOptions(r))
 	h.respond(w, http.StatusOK, result, err)
 }
 
@@ -144,13 +157,13 @@ func (h *Handler) createProgram(w http.ResponseWriter, r *http.Request) {
 
 // getProgram возвращает программу по ID.
 func (h *Handler) getProgram(w http.ResponseWriter, r *http.Request) {
-	result, err := h.service.Store().GetProgram(r.Context(), r.PathValue("id"))
+	result, err := h.readCatalog(w, r).Store().GetProgram(r.Context(), r.PathValue("id"))
 	h.respond(w, http.StatusOK, result, err)
 }
 
 // listPrograms возвращает программы университета или backlog-программы.
 func (h *Handler) listPrograms(w http.ResponseWriter, r *http.Request) {
-	result, err := h.service.Store().ListPrograms(r.Context(), r.URL.Query().Get("university_id"), listOptions(r))
+	result, err := h.readCatalog(w, r).Store().ListPrograms(r.Context(), r.URL.Query().Get("university_id"), listOptions(r))
 	h.respond(w, http.StatusOK, result, err)
 }
 
@@ -205,13 +218,13 @@ func (h *Handler) createCourse(w http.ResponseWriter, r *http.Request) {
 
 // getCourse возвращает курс по ID.
 func (h *Handler) getCourse(w http.ResponseWriter, r *http.Request) {
-	result, err := h.service.Store().GetCourse(r.Context(), r.PathValue("id"))
+	result, err := h.readCatalog(w, r).Store().GetCourse(r.Context(), r.PathValue("id"))
 	h.respond(w, http.StatusOK, result, err)
 }
 
 // listCourses возвращает курсы программы или backlog-курсы.
 func (h *Handler) listCourses(w http.ResponseWriter, r *http.Request) {
-	result, err := h.service.Store().ListCourses(r.Context(), r.URL.Query().Get("program_id"), listOptions(r))
+	result, err := h.readCatalog(w, r).Store().ListCourses(r.Context(), r.URL.Query().Get("program_id"), listOptions(r))
 	h.respond(w, http.StatusOK, result, err)
 }
 
@@ -266,13 +279,13 @@ func (h *Handler) createTopic(w http.ResponseWriter, r *http.Request) {
 
 // getTopic возвращает тему по ID.
 func (h *Handler) getTopic(w http.ResponseWriter, r *http.Request) {
-	result, err := h.service.Store().GetTopic(r.Context(), r.PathValue("id"))
+	result, err := h.readCatalog(w, r).Store().GetTopic(r.Context(), r.PathValue("id"))
 	h.respond(w, http.StatusOK, result, err)
 }
 
 // listTopics возвращает темы курса или backlog-темы.
 func (h *Handler) listTopics(w http.ResponseWriter, r *http.Request) {
-	result, err := h.service.Store().ListTopics(r.Context(), r.URL.Query().Get("course_id"), listOptions(r))
+	result, err := h.readCatalog(w, r).Store().ListTopics(r.Context(), r.URL.Query().Get("course_id"), listOptions(r))
 	h.respond(w, http.StatusOK, result, err)
 }
 
@@ -313,13 +326,13 @@ func (h *Handler) changeTopicStatus(w http.ResponseWriter, r *http.Request) {
 
 // topicTree возвращает дерево тем конкретного курса.
 func (h *Handler) topicTree(w http.ResponseWriter, r *http.Request) {
-	result, err := h.service.TopicTree(r.Context(), r.PathValue("id"))
+	result, err := h.readCatalog(w, r).TopicTree(r.Context(), r.PathValue("id"))
 	h.respond(w, http.StatusOK, result, err)
 }
 
 // topicTreeByQuery возвращает дерево тем по query course_id или общий backlog-лес.
 func (h *Handler) topicTreeByQuery(w http.ResponseWriter, r *http.Request) {
-	result, err := h.service.TopicTree(r.Context(), r.URL.Query().Get("course_id"))
+	result, err := h.readCatalog(w, r).TopicTree(r.Context(), r.URL.Query().Get("course_id"))
 	h.respond(w, http.StatusOK, result, err)
 }
 
@@ -351,23 +364,30 @@ func (h *Handler) removePrerequisite(w http.ResponseWriter, r *http.Request) {
 
 // listPrerequisites возвращает prerequisites темы.
 func (h *Handler) listPrerequisites(w http.ResponseWriter, r *http.Request) {
-	result, err := h.service.Store().ListPrerequisites(r.Context(), r.PathValue("id"))
+	store := h.readCatalog(w, r).Store()
+	id := r.PathValue("id")
+	if _, err := store.GetTopic(r.Context(), id); err != nil {
+		h.writeError(w, err)
+		return
+	}
+	result, err := store.ListPrerequisites(r.Context(), id)
 	h.respond(w, http.StatusOK, result, err)
 }
 
 // validateEntity проверяет существование одной catalog-сущности.
 func (h *Handler) validateEntity(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	store := h.readCatalog(w, r).Store()
 	var err error
 	switch r.PathValue("entity") {
 	case "universities":
-		_, err = h.service.Store().GetUniversity(r.Context(), id)
+		_, err = store.GetUniversity(r.Context(), id)
 	case "programs":
-		_, err = h.service.Store().GetProgram(r.Context(), id)
+		_, err = store.GetProgram(r.Context(), id)
 	case "courses":
-		_, err = h.service.Store().GetCourse(r.Context(), id)
+		_, err = store.GetCourse(r.Context(), id)
 	case "topics":
-		_, err = h.service.Store().GetTopic(r.Context(), id)
+		_, err = store.GetTopic(r.Context(), id)
 	default:
 		err = apperror.New(apperror.ValidationError, "неизвестный тип сущности", http.StatusBadRequest)
 	}
@@ -380,29 +400,49 @@ func (h *Handler) validateBinding(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &input) {
 		return
 	}
-	result, err := h.service.ValidateBinding(r.Context(), input)
+	result, err := h.readCatalog(w, r).ValidateBinding(r.Context(), input)
 	h.respond(w, http.StatusOK, result, err)
 }
 
 // admin извлекает actor из внутренних headers и проверяет роль admin/superuser.
 func (h *Handler) admin(w http.ResponseWriter, r *http.Request) (string, bool) {
-	actorID := r.Header.Get("X-User-ID")
-	roles := strings.Split(r.Header.Get("X-User-Roles"), ",")
-	isAdmin := false
-	for _, role := range roles {
-		role = strings.TrimSpace(role)
-		if strings.EqualFold(role, "admin") || strings.EqualFold(role, "superuser") {
-			isAdmin = true
-			break
-		}
-	}
-	if !isAdmin || uuid.Validate(actorID) != nil {
-		// actorID обязан быть UUID, потому что Entities пишет его в audit/outbox поля PostgreSQL.
+	w.Header().Set("Cache-Control", "no-store")
+	actorID, ok := h.gatewayAdmin(r)
+	if !ok {
 		h.writeError(w, apperror.New(apperror.PermissionDenied, "операция доступна только администратору", http.StatusForbidden))
 		return "", false
 	}
 
 	return actorID, true
+}
+
+func (h *Handler) readCatalog(w http.ResponseWriter, r *http.Request) *service.Service {
+	w.Header().Set("Cache-Control", "no-store")
+	if _, ok := h.gatewayAdmin(r); ok {
+		return h.service
+	}
+
+	return h.public
+}
+
+func (h *Handler) gatewayAdmin(r *http.Request) (string, bool) {
+	credentials := r.Header.Values("Authorization")
+	ids, roleHeaders := r.Header.Values("X-User-ID"), r.Header.Values("X-User-Roles")
+	if h.gatewayToken == nil || len(credentials) != 1 || len(ids) != 1 || len(roleHeaders) != 1 ||
+		len(roleHeaders[0]) > 512 || !bearerAuthorized(credentials[0], *h.gatewayToken) {
+		return "", false
+	}
+	id, err := uuid.Parse(ids[0])
+	if err != nil || id == uuid.Nil || id.String() != ids[0] {
+		return "", false
+	}
+	for role := range strings.SplitSeq(roleHeaders[0], ",") {
+		if role = strings.TrimSpace(role); strings.EqualFold(role, "admin") || strings.EqualFold(role, "superuser") {
+			return ids[0], true
+		}
+	}
+
+	return "", false
 }
 
 // statusInput читает status mutation input и проверяет допустимое значение enum.
