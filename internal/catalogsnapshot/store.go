@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"math"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -82,7 +83,11 @@ func parseCursor(cursor string) (graphKey, int64, error) {
 	if err != nil || n != cursorSize || (raw[0] != 1 && raw[0] != 2) {
 		return graphKey{}, 0, ErrInvalidPage
 	}
-	watermark := int64(binary.BigEndian.Uint64(raw[1:9]))
+	encodedWatermark := binary.BigEndian.Uint64(raw[1:9])
+	if encodedWatermark > math.MaxInt64 {
+		return graphKey{}, 0, ErrInvalidPage
+	}
+	watermark := int64(encodedWatermark) //nolint:gosec // значение проверено против math.MaxInt64
 	key := graphKey{
 		kind:   raw[0],
 		topic:  uuid.UUID(raw[9:25]),
@@ -98,7 +103,8 @@ func parseCursor(cursor string) (graphKey, int64, error) {
 func (k graphKey) cursor(watermark int64) string {
 	var raw [cursorSize]byte
 	raw[0] = k.kind
-	binary.BigEndian.PutUint64(raw[1:9], uint64(watermark))
+	// Отрицательная версия кодируется только тестом невалидного cursor; production watermark неотрицателен.
+	binary.BigEndian.PutUint64(raw[1:9], uint64(watermark)) //nolint:gosec // сохраняем битовое представление int64
 	copy(raw[9:25], k.topic[:])
 	copy(raw[25:], k.target[:])
 
@@ -158,6 +164,7 @@ func (s *Store) Snapshot(ctx context.Context, request SnapshotRequest) (Snapshot
 	for rows.Next() {
 		if len(page.Records) == request.Limit {
 			page.NextCursor = last.cursor(watermark)
+
 			break
 		}
 		var kind int16
@@ -165,7 +172,10 @@ func (s *Store) Snapshot(ctx context.Context, request SnapshotRequest) (Snapshot
 		if err := rows.Scan(&kind, &last.topic, &last.target, &result.Revision, &result.Record); err != nil {
 			return SnapshotPage{}, err
 		}
-		last.kind = byte(kind)
+		if kind != 1 && kind != 2 {
+			return SnapshotPage{}, ErrInvalidPage
+		}
+		last.kind = byte(kind) //nolint:gosec // kind проверен как 1 или 2
 		page.Records = append(page.Records, result)
 	}
 
@@ -204,6 +214,7 @@ func (s *Store) Changes(ctx context.Context, request ChangeRequest) (ChangePage,
 		if len(page.Changes) == request.Limit {
 			page.More = true
 			page.Through = page.Changes[len(page.Changes)-1].Revision
+
 			break
 		}
 		var change Change

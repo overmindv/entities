@@ -72,6 +72,7 @@ func readSnapshot(t *testing.T, ctx context.Context, store *catalogsnapshot.Stor
 	}
 }
 
+//nolint:paralleltest // тест воспроизводит журнал общей component-БД
 func TestPostgresCatalogSnapshotReplay(t *testing.T) {
 	pool := testCatalogPool(t, "")
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
@@ -106,8 +107,8 @@ func TestPostgresCatalogSnapshotReplay(t *testing.T) {
 
 	rename := func(title string) pgx.Tx {
 		t.Helper()
-		tx, err := pool.Begin(ctx)
-		check(err)
+		tx, beginErr := pool.Begin(ctx)
+		check(beginErr)
 		t.Cleanup(func() {
 			cleanup, cleanupCancel := context.WithTimeout(context.Background(), time.Second)
 			defer cleanupCancel()
@@ -162,14 +163,15 @@ func TestPostgresCatalogSnapshotReplay(t *testing.T) {
 			if replay.Through != upper {
 				t.Fatal("did not advance beyond non-graph events", replay.Through, upper)
 			}
+
 			break
 		}
-		next, err := snapshots.Changes(ctx, catalogsnapshot.ChangeRequest{
+		next, pageErr := snapshots.Changes(ctx, catalogsnapshot.ChangeRequest{
 			After:     replay.Through,
 			Watermark: &upper,
 			Limit:     2,
 		})
-		check(err)
+		check(pageErr)
 		if next.Through <= replay.Through {
 			t.Fatal("replay did not advance")
 		}
@@ -185,8 +187,8 @@ func TestPostgresCatalogSnapshotReplay(t *testing.T) {
 		if seen[change.EventID] {
 			return
 		}
-		if err := uuid.Validate(change.EventID); err != nil {
-			t.Fatal(err)
+		if validationErr := uuid.Validate(change.EventID); validationErr != nil {
+			t.Fatal(validationErr)
 		}
 		seen[change.EventID] = true
 		key := decodeGraph(t, change.GraphRow).key()
@@ -227,8 +229,8 @@ func TestPostgresCatalogSnapshotReplay(t *testing.T) {
 	}
 	dispatch := outbox.NewCatalogOutbox(pool, "catalog.activity.v1")
 	for range 2 {
-		events, err := dispatch.FetchPending(ctx, pending)
-		check(err)
+		events, fetchErr := dispatch.FetchPending(ctx, pending)
+		check(fetchErr)
 		found := false
 		for _, event := range events {
 			if event.ID != eventID {
@@ -245,6 +247,7 @@ func TestPostgresCatalogSnapshotReplay(t *testing.T) {
 				t.Fatal("Kafka envelope differs from replay event", envelope)
 			}
 			found = true
+
 			break
 		}
 		if !found {

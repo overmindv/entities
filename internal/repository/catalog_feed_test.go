@@ -14,6 +14,7 @@ import (
 	"github.com/overmindv/entities/internal/outbox"
 )
 
+//nolint:paralleltest // тест синхронизирует транзакции в общей component-БД
 func TestFeedStampAfterConcurrentParentHide(t *testing.T) {
 	pool := testCatalogPool(t, "")
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -33,11 +34,11 @@ func TestFeedStampAfterConcurrentParentHide(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = hidden.Rollback(t.Context()) }()
-	if _, err := hidden.Exec(ctx, "UPDATE courses SET status='hidden' WHERE id=$1", course.ID); err != nil {
-		t.Fatal(err)
+	if _, execErr := hidden.Exec(ctx, "UPDATE courses SET status='hidden' WHERE id=$1", course.ID); execErr != nil {
+		t.Fatal(execErr)
 	}
-	if err := insertCatalogEvent(ctx, hidden, "catalog.course.updated", "course", course.ID, actor, map[string]string{"status": "hidden"}); err != nil {
-		t.Fatal(err)
+	if insertErr := insertCatalogEvent(ctx, hidden, "catalog.course.updated", "course", course.ID, actor, map[string]string{"status": "hidden"}); insertErr != nil {
+		t.Fatal(insertErr)
 	}
 
 	child, err := pool.Begin(ctx)
@@ -99,7 +100,9 @@ func TestFeedStampAfterConcurrentParentHide(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // тест использует общую component-БД и конкурентные транзакции
 func TestConcurrentTopicMovesRejectCycleAndKeepEventSmall(t *testing.T) {
+	const topicUpdatedEvent = "catalog.topic.updated"
 	pool := testCatalogPool(t, "")
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
@@ -142,8 +145,8 @@ func TestConcurrentTopicMovesRejectCycleAndKeepEventSmall(t *testing.T) {
 		topic.Description = strings.Repeat("test description ", 30_000)
 		go func() {
 			<-start
-			item, err := admin.UpdateTopic(ctx, topic)
-			results <- outcome{topic: item, parent: parent, err: err}
+			item, updateErr := admin.UpdateTopic(ctx, topic)
+			results <- outcome{topic: item, parent: parent, err: updateErr}
 		}()
 	}
 	close(start)
@@ -181,13 +184,14 @@ func TestConcurrentTopicMovesRejectCycleAndKeepEventSmall(t *testing.T) {
 		if err := json.Unmarshal(record.Value, &envelope); err != nil {
 			t.Fatal(err)
 		}
-		if envelope.Type != "catalog.topic.updated" {
+		if envelope.Type != topicUpdatedEvent {
 			continue
 		}
 		if len(record.Value) > 4<<10 || !envelope.Visibility.Visible || !envelope.Visibility.ScopeReset ||
 			!strings.Contains(strings.Join(envelope.Visibility.Ancestors, ","), "topic:"+moved.parent) {
 			t.Error("expected bounded public event with new parent and scope reset", len(record.Value), envelope.Visibility)
 		}
+
 		return
 	}
 	t.Fatal("move event missing")

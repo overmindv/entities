@@ -368,6 +368,7 @@ func (h *Handler) listPrerequisites(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if _, err := store.GetTopic(r.Context(), id); err != nil {
 		h.writeError(w, err)
+
 		return
 	}
 	result, err := store.ListPrerequisites(r.Context(), id)
@@ -410,6 +411,7 @@ func (h *Handler) admin(w http.ResponseWriter, r *http.Request) (string, bool) {
 	actorID, ok := h.gatewayAdmin(r)
 	if !ok {
 		h.writeError(w, apperror.New(apperror.PermissionDenied, "операция доступна только администратору", http.StatusForbidden))
+
 		return "", false
 	}
 
@@ -462,6 +464,7 @@ func (h *Handler) statusInput(w http.ResponseWriter, r *http.Request) (string, d
 		return actor, input.Status, true
 	default:
 		h.writeError(w, apperror.New(apperror.ValidationError, "недопустимый status", http.StatusUnprocessableEntity))
+
 		return "", "", false
 	}
 }
@@ -470,6 +473,7 @@ func (h *Handler) statusInput(w http.ResponseWriter, r *http.Request) (string, d
 func (h *Handler) respond(w http.ResponseWriter, status int, payload any, err error) {
 	if err != nil {
 		h.writeError(w, err)
+
 		return
 	}
 	writeJSON(w, status, payload)
@@ -480,6 +484,7 @@ func (h *Handler) writeError(w http.ResponseWriter, err error) {
 	var appErr *apperror.Error
 	if errors.As(err, &appErr) {
 		writeJSON(w, appErr.Status, appErr)
+
 		return
 	}
 	h.logger.Error("ошибка обработки запроса", "error", err)
@@ -504,6 +509,7 @@ func decode(w http.ResponseWriter, r *http.Request, target any) bool {
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
 	if err := decoder.Decode(target); err != nil {
 		writeJSON(w, http.StatusBadRequest, apperror.New(apperror.ValidationError, "некорректный JSON", http.StatusBadRequest))
+
 		return false
 	}
 

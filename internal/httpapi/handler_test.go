@@ -16,6 +16,8 @@ import (
 	"github.com/overmindv/entities/internal/service"
 )
 
+const actorID = "11111111-1111-1111-1111-111111111111"
+
 // catalogCreateStore сохраняет write inputs из HTTP handler для проверки actor и optional UUID.
 type catalogCreateStore struct {
 	service.Store
@@ -70,8 +72,10 @@ func TestAdminAllowsAdminAndSuperuserRoles(t *testing.T) {
 	handler := &Handler{gatewayToken: &expected, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
 			request := httptest.NewRequest(http.MethodPost, "/v1/universities", nil)
-			request.Header.Set("X-User-ID", "11111111-1111-1111-1111-111111111111")
+			request.Header.Set("X-User-ID", actorID)
 			request.Header.Set("X-User-Roles", test.roles)
 			request.Header.Set("Authorization", "Bearer "+token)
 			recorder := httptest.NewRecorder()
@@ -80,7 +84,7 @@ func TestAdminAllowsAdminAndSuperuserRoles(t *testing.T) {
 			if ok != test.want {
 				t.Fatalf("admin() ok = %v, want %v", ok, test.want)
 			}
-			if ok && actor != "11111111-1111-1111-1111-111111111111" {
+			if ok && actor != actorID {
 				t.Fatalf("неожиданный actor: %q", actor)
 			}
 		})
@@ -121,7 +125,7 @@ func TestCreateEndpointsAcceptAdminAndEmptyOptionalUUIDs(t *testing.T) {
 	if university.Code != http.StatusCreated {
 		t.Fatalf("create university status = %d body = %s", university.Code, university.Body.String())
 	}
-	if store.university.LogoFileID != nil || store.university.CreatedBy != "11111111-1111-1111-1111-111111111111" {
+	if store.university.LogoFileID != nil || store.university.CreatedBy != actorID {
 		t.Fatalf("unexpected university input: %+v", store.university)
 	}
 
@@ -129,7 +133,7 @@ func TestCreateEndpointsAcceptAdminAndEmptyOptionalUUIDs(t *testing.T) {
 	if course.Code != http.StatusCreated {
 		t.Fatalf("create course status = %d body = %s", course.Code, course.Body.String())
 	}
-	if store.course.ProgramID != nil || store.course.CreatedBy != "11111111-1111-1111-1111-111111111111" {
+	if store.course.ProgramID != nil || store.course.CreatedBy != actorID {
 		t.Fatalf("unexpected course input: %+v", store.course)
 	}
 }

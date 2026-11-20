@@ -36,6 +36,7 @@ func testCatalogPool(t testing.TB, lockTimeout string) *pgxpool.Pool {
 	return pool
 }
 
+//nolint:paralleltest // тест блокирует таблицу общей component-БД
 func TestPostgresCatalogOutboxRollback(t *testing.T) {
 	ctx := t.Context()
 	pool := testCatalogPool(t, "")
@@ -97,8 +98,8 @@ func TestPostgresCatalogOutboxRollback(t *testing.T) {
 				defer cancel()
 				_ = lock.Rollback(cleanup)
 			}()
-			if _, err := lock.Exec(ctx, "LOCK TABLE outbox_events IN ACCESS EXCLUSIVE MODE"); err != nil {
-				t.Fatal(err)
+			if _, lockErr := lock.Exec(ctx, "LOCK TABLE outbox_events IN ACCESS EXCLUSIVE MODE"); lockErr != nil {
+				t.Fatal(lockErr)
 			}
 			err = mutate(blocked)
 			var pgErr *pgconn.PgError

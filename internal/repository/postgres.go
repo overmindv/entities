@@ -59,6 +59,7 @@ func (r *Postgres) CreateUniversity(ctx context.Context, item domain.University)
 		if err != nil {
 			return domain.University{}, translateConstraint(err, apperror.UniversityAlreadyExists)
 		}
+
 		return result, insertCatalogEvent(ctx, tx, "catalog.university.created", "university", result.ID, item.CreatedBy, result)
 	})
 }
@@ -127,6 +128,7 @@ func (r *Postgres) UpdateUniversity(ctx context.Context, item domain.University)
 		if err != nil {
 			return domain.University{}, translateConstraint(translateNotFound(err, apperror.UniversityNotFound), apperror.UniversityAlreadyExists)
 		}
+
 		return result, insertCatalogEvent(ctx, tx, "catalog.university.updated", "university", result.ID, item.UpdatedBy, result)
 	})
 }
@@ -144,6 +146,7 @@ func (r *Postgres) ChangeUniversityStatus(ctx context.Context, id string, status
 		if err != nil {
 			return domain.University{}, translateConstraint(translateNotFound(err, apperror.UniversityNotFound), apperror.UniversityAlreadyExists)
 		}
+
 		return result, insertCatalogEvent(ctx, tx, "catalog.university.updated", "university", id, actorID, result)
 	})
 }
@@ -166,6 +169,7 @@ func (r *Postgres) CreateProgram(ctx context.Context, item domain.Program) (doma
 		if err != nil {
 			return domain.Program{}, translateConstraint(err, apperror.ProgramAlreadyExists)
 		}
+
 		return result, insertCatalogEvent(ctx, tx, "catalog.program.created", "program", result.ID, item.CreatedBy, result)
 	})
 }
@@ -212,6 +216,7 @@ func (r *Postgres) UpdateProgram(ctx context.Context, item domain.Program) (doma
 		if err != nil {
 			return domain.Program{}, translateConstraint(translateNotFound(err, apperror.ProgramNotFound), apperror.ProgramAlreadyExists)
 		}
+
 		return result, insertCatalogEvent(ctx, tx, "catalog.program.updated", "program", result.ID, item.UpdatedBy, result)
 	})
 }
@@ -228,6 +233,7 @@ func (r *Postgres) ChangeProgramStatus(ctx context.Context, id string, status do
 		if err != nil {
 			return domain.Program{}, translateConstraint(translateNotFound(err, apperror.ProgramNotFound), apperror.ProgramAlreadyExists)
 		}
+
 		return result, insertCatalogEvent(ctx, tx, "catalog.program.updated", "program", id, actorID, result)
 	})
 }
@@ -250,6 +256,7 @@ func (r *Postgres) CreateCourse(ctx context.Context, item domain.Course) (domain
 		if err != nil {
 			return domain.Course{}, translateConstraint(err, apperror.CourseAlreadyExists)
 		}
+
 		return result, insertCatalogEvent(ctx, tx, "catalog.course.created", "course", result.ID, item.CreatedBy, result)
 	})
 }
@@ -295,6 +302,7 @@ func (r *Postgres) UpdateCourse(ctx context.Context, item domain.Course) (domain
 		if err != nil {
 			return domain.Course{}, translateConstraint(translateNotFound(err, apperror.CourseNotFound), apperror.CourseAlreadyExists)
 		}
+
 		return result, insertCatalogEvent(ctx, tx, "catalog.course.updated", "course", result.ID, item.UpdatedBy, result)
 	})
 }
@@ -311,6 +319,7 @@ func (r *Postgres) ChangeCourseStatus(ctx context.Context, id string, status dom
 		if err != nil {
 			return domain.Course{}, translateConstraint(translateNotFound(err, apperror.CourseNotFound), apperror.CourseAlreadyExists)
 		}
+
 		return result, insertCatalogEvent(ctx, tx, "catalog.course.updated", "course", id, actorID, result)
 	})
 }
@@ -333,6 +342,7 @@ func (r *Postgres) CreateTopic(ctx context.Context, item domain.Topic) (domain.T
 		if err != nil {
 			return domain.Topic{}, translateConstraint(err, apperror.TopicAlreadyExists)
 		}
+
 		return result, insertCatalogEvent(ctx, tx, "catalog.topic.created", "topic", result.ID, item.CreatedBy, result)
 	})
 }
@@ -411,6 +421,7 @@ func (r *Postgres) UpdateTopic(ctx context.Context, item domain.Topic) (domain.T
 		if err != nil {
 			return domain.Topic{}, translateConstraint(translateNotFound(err, apperror.TopicNotFound), apperror.TopicAlreadyExists)
 		}
+
 		return result, insertCatalogEventWithReset(ctx, tx, "catalog.topic.updated", "topic", result.ID,
 			item.UpdatedBy, result, moved)
 	})
@@ -428,6 +439,7 @@ func (r *Postgres) ChangeTopicStatus(ctx context.Context, id string, status doma
 		if err != nil {
 			return domain.Topic{}, translateConstraint(translateNotFound(err, apperror.TopicNotFound), apperror.TopicAlreadyExists)
 		}
+
 		return result, insertCatalogEvent(ctx, tx, "catalog.topic.updated", "topic", id, actorID, result)
 	})
 }
@@ -439,6 +451,7 @@ func (r *Postgres) AddPrerequisite(ctx context.Context, item domain.TopicPrerequ
 		if err != nil {
 			return domain.TopicPrerequisite{}, translateConstraint(err, apperror.InvalidTopicPrerequisite)
 		}
+
 		return item, insertCatalogEvent(ctx, tx, "catalog.topic.prerequisite.added", "topic", item.TopicID, actorID, item)
 	})
 }

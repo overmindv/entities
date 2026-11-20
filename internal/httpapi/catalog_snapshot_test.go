@@ -33,6 +33,8 @@ func (s *snapshotStub) Changes(_ context.Context, request catalogsnapshot.Change
 }
 
 func TestCatalogSnapshotRoutes(t *testing.T) {
+	t.Parallel()
+
 	const snapshot = "/v1/internal/catalog/snapshot"
 	const changes = "/v1/internal/catalog/changes"
 	token := strings.Repeat("q", 32)
@@ -95,6 +97,8 @@ func TestCatalogSnapshotRoutes(t *testing.T) {
 }
 
 func TestCatalogSnapshotRequiresConfiguredToken(t *testing.T) {
+	t.Parallel()
+
 	mux := http.NewServeMux()
 	if err := RegisterCatalogSnapshot(mux, &snapshotStub{}, ""); err != nil {
 		t.Fatal(err)
