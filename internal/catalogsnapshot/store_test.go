@@ -10,6 +10,8 @@ import (
 )
 
 func TestSnapshotCursor(t *testing.T) {
+	t.Parallel()
+
 	for _, key := range []graphKey{
 		{kind: 1, topic: uuid.New()},
 		{kind: 2, topic: uuid.New(), target: uuid.New()},
@@ -31,6 +33,8 @@ func TestSnapshotCursor(t *testing.T) {
 }
 
 func TestStoreRejectsUnpinnedCursor(t *testing.T) {
+	t.Parallel()
+
 	page := SnapshotRequest{Cursor: graphKey{kind: 1, topic: uuid.New()}.cursor(17), Limit: 20}
 	if _, err := New(nil).Snapshot(t.Context(), page); !errors.Is(err, ErrInvalidPage) {
 		t.Fatal("cursor accepted without a watermark", err)

@@ -116,6 +116,7 @@ func (o *CatalogOutbox) FetchPending(ctx context.Context, limit int) ([]parker.O
 			Value: envelope,
 		})
 	}
+
 	return records, rows.Err()
 }
 
@@ -131,5 +132,6 @@ func (o *CatalogOutbox) MarkSent(ctx context.Context, ids []string) error {
 	if err != nil {
 		return fmt.Errorf("catalog outbox mark sent: %w", err)
 	}
+
 	return nil
 }
