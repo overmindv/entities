@@ -390,11 +390,29 @@ func (r *Postgres) ListTopics(ctx context.Context, parentID string, options doma
 // UpdateTopic обновляет тему и пишет outbox event.
 func (r *Postgres) UpdateTopic(ctx context.Context, item domain.Topic) (domain.Topic, error) {
 	return writeCatalog(ctx, r.pool, func(tx pgx.Tx) (domain.Topic, error) {
+		var courseID *string
+		// Две темы одного курса не должны менять родителей по одному старому дереву.
+		if err := tx.QueryRow(ctx, `
+			SELECT course_id, pg_advisory_xact_lock(hashtextextended('entities:topic-tree:'||COALESCE(course_id::text,'backlog'),0))
+			FROM topics WHERE id=$1 AND deleted_at IS NULL`, item.ID).Scan(&courseID, nil); err != nil {
+			return domain.Topic{}, translateNotFound(err, apperror.TopicNotFound)
+		}
+		var oldParent *string
+		if err := tx.QueryRow(ctx, `SELECT parent_topic_id FROM topics WHERE id=$1 AND deleted_at IS NULL FOR UPDATE`, item.ID).Scan(&oldParent); err != nil {
+			return domain.Topic{}, translateNotFound(err, apperror.TopicNotFound)
+		}
+		moved := !sameOptionalString(oldParent, item.ParentTopicID)
+		if moved && item.ParentTopicID != nil {
+			if err := checkTopicMove(ctx, tx, item.ID, *item.ParentTopicID, courseID); err != nil {
+				return domain.Topic{}, err
+			}
+		}
 		result, err := scanTopic(tx.QueryRow(ctx, `UPDATE topics SET parent_topic_id=$2,title=$3,slug=$4,description=$5,order_index=$6,difficulty=$7,updated_by=$8,updated_at=now() WHERE id=$1 AND deleted_at IS NULL RETURNING id,course_id,parent_topic_id,title,slug,description,order_index,difficulty,status,created_by,updated_by,created_at,updated_at,deleted_at`, item.ID, item.ParentTopicID, item.Title, item.Slug, item.Description, item.OrderIndex, item.Difficulty, item.UpdatedBy))
 		if err != nil {
 			return domain.Topic{}, translateConstraint(translateNotFound(err, apperror.TopicNotFound), apperror.TopicAlreadyExists)
 		}
-		return result, insertCatalogEvent(ctx, tx, "catalog.topic.updated", "topic", result.ID, item.UpdatedBy, result)
+		return result, insertCatalogEventWithReset(ctx, tx, "catalog.topic.updated", "topic", result.ID,
+			item.UpdatedBy, result, moved)
 	})
 }
 

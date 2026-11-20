@@ -10,8 +10,7 @@ import (
 	"github.com/overmindv/parker"
 )
 
-// catalogEnvelope — конверт события каталога для топика feed consumer-а.
-// Поля соответствуют колонкам outbox_events; payload сохраняется как есть.
+// catalogEnvelope разделяет данные для ленты и внутренний граф каталога.
 type catalogEnvelope struct {
 	EventType        string          `json:"event_type"`
 	OccurredAt       time.Time       `json:"occurred_at"`
@@ -23,11 +22,10 @@ type catalogEnvelope struct {
 	CatalogRevision  *int64          `json:"catalog_revision,omitempty"`
 	AggregateVersion *int64          `json:"aggregate_version,omitempty"`
 	GraphChange      json.RawMessage `json:"graph_change,omitempty"`
+	FeedVisibility   json.RawMessage `json:"feed_visibility,omitempty"`
 }
 
-// CatalogOutbox реализует parker.Outbox поверх существующей таблицы
-// outbox_events сущностей каталога. Релей публикует ВСЕ pending-события;
-// семантическая фильтрация (created/activated) выполняется в feed consumer-е.
+// CatalogOutbox публикует события из таблицы outbox_events.
 type CatalogOutbox struct {
 	pool  *pgxpool.Pool
 	topic string
@@ -44,8 +42,18 @@ var _ parker.Outbox = (*CatalogOutbox)(nil) // гарантирует реали
 func (o *CatalogOutbox) FetchPending(ctx context.Context, limit int) ([]parker.OutboxRecord, error) {
 	rows, err := o.pool.Query(ctx, `
 		SELECT id::text, event_type, occurred_at, actor_user_id::text,
-		       aggregate_type, aggregate_id::text, payload,
-		       catalog_revision, aggregate_version, graph_change
+		       aggregate_type, aggregate_id::text,
+		       CASE WHEN event_type IN ('catalog.' || aggregate_type || '.created',
+		                                'catalog.' || aggregate_type || '.updated')
+		            THEN CASE WHEN (feed_visibility->>'visible')::boolean
+		                      THEN jsonb_strip_nulls(jsonb_build_object(
+		                          'name', left(payload->>'name',256),
+		                          'title', left(payload->>'title',256),
+		                          'status', payload->>'status'))
+		                      ELSE '{"status":"hidden"}'::jsonb END
+		            ELSE payload END,
+		       catalog_revision, aggregate_version, graph_change, feed_visibility,
+		       COALESCE((feed_visibility->>'visible')::boolean, false)
 		FROM outbox_events
 		WHERE published_at IS NULL
 		ORDER BY occurred_at
@@ -69,12 +77,21 @@ func (o *CatalogOutbox) FetchPending(ctx context.Context, limit int) ([]parker.O
 			catalogRevision  *int64
 			aggregateVersion *int64
 			graphChange      []byte
+			feedVisibility   []byte
+			public           bool
 		)
 		if err := rows.Scan(&id, &eventType, &occurredAt, &actorUserID, &aggregateType, &aggregateID, &payload,
-			&catalogRevision, &aggregateVersion, &graphChange); err != nil {
+			&catalogRevision, &aggregateVersion, &graphChange, &feedVisibility, &public); err != nil {
 			return nil, fmt.Errorf("catalog outbox scan: %w", err)
 		}
 
+		prefix := "catalog." + aggregateType + "."
+		switch eventType {
+		case prefix + "created", prefix + "updated":
+			if !public {
+				eventType = prefix + "unpublished"
+			}
+		}
 		envelope, err := json.Marshal(catalogEnvelope{
 			EventType:        eventType,
 			OccurredAt:       occurredAt,
@@ -86,6 +103,7 @@ func (o *CatalogOutbox) FetchPending(ctx context.Context, limit int) ([]parker.O
 			CatalogRevision:  catalogRevision,
 			AggregateVersion: aggregateVersion,
 			GraphChange:      graphChange,
+			FeedVisibility:   feedVisibility,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("catalog outbox marshal: %w", err)
