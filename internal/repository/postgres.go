@@ -324,7 +324,10 @@ func (r *Postgres) ChangeCourseStatus(ctx context.Context, id string, status dom
 	})
 }
 
-// CreateTopic создаёт тему, если parent course существует или не задан.
+const topicColumns = `id,course_id,parent_topic_id,title,slug,description,order_index,
+	difficulty,status,created_by,updated_by,created_at,updated_at,deleted_at,estimated_study_minutes,learning_outcomes`
+
+// CreateTopic создает тему, если курс существует или не задан.
 func (r *Postgres) CreateTopic(ctx context.Context, item domain.Topic) (domain.Topic, error) {
 	if item.CourseID != nil {
 		exists, err := r.activeCourseExists(ctx, *item.CourseID)
@@ -337,7 +340,13 @@ func (r *Postgres) CreateTopic(ctx context.Context, item domain.Topic) (domain.T
 	}
 
 	return writeCatalog(ctx, r.pool, func(tx pgx.Tx) (domain.Topic, error) {
-		row := tx.QueryRow(ctx, `INSERT INTO topics (course_id,parent_topic_id,title,slug,description,order_index,difficulty,status,created_by,updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9) RETURNING id,course_id,parent_topic_id,title,slug,description,order_index,difficulty,status,created_by,updated_by,created_at,updated_at,deleted_at`, item.CourseID, item.ParentTopicID, item.Title, item.Slug, item.Description, item.OrderIndex, item.Difficulty, item.Status, item.CreatedBy)
+		minutes, outcomes := topicLearningValues(item.LearningMetadata)
+		row := tx.QueryRow(ctx, `
+			INSERT INTO topics (course_id,parent_topic_id,title,slug,description,order_index,difficulty,
+				status,created_by,updated_by,estimated_study_minutes,learning_outcomes)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,$10,COALESCE($11::text[],'{}'))
+			RETURNING `+topicColumns, item.CourseID, item.ParentTopicID, item.Title, item.Slug,
+			item.Description, item.OrderIndex, item.Difficulty, item.Status, item.CreatedBy, minutes, outcomes)
 		result, err := scanTopic(row)
 		if err != nil {
 			return domain.Topic{}, translateConstraint(err, apperror.TopicAlreadyExists)
@@ -349,17 +358,23 @@ func (r *Postgres) CreateTopic(ctx context.Context, item domain.Topic) (domain.T
 
 // GetTopic возвращает активную тему по ID.
 func (r *Postgres) GetTopic(ctx context.Context, id string) (domain.Topic, error) {
-	item, err := scanTopic(r.pool.QueryRow(ctx, `SELECT id,course_id,parent_topic_id,title,slug,description,order_index,difficulty,status,created_by,updated_by,created_at,updated_at,deleted_at FROM `+r.readTable("topics")+` WHERE id=$1 AND deleted_at IS NULL`, id))
+	item, err := scanTopic(r.pool.QueryRow(ctx, `SELECT `+topicColumns+` FROM `+r.readTable("topics")+` WHERE id=$1 AND deleted_at IS NULL`, id))
 
 	return item, translateNotFound(err, apperror.TopicNotFound)
 }
 
 // ListTopics возвращает активные темы parent course или общий список.
 func (r *Postgres) ListTopics(ctx context.Context, parentID string, options domain.ListOptions) ([]domain.Topic, error) {
-	const selectTopic = `SELECT t.id,t.course_id,t.parent_topic_id,t.title,t.slug,t.description,t.order_index,t.difficulty,t.status,t.created_by,t.updated_by,t.created_at,t.updated_at,t.deleted_at FROM `
+	const selectTopic = `SELECT ` + topicColumns + ` FROM `
 	query := selectTopic + r.readTable("topics") + ` t WHERE deleted_at IS NULL AND ($1='' OR status::text=$1) AND ($2='' OR title ILIKE '%'||$2||'%') ORDER BY order_index,title,id LIMIT $3 OFFSET $4`
 	args := []any{options.Status, options.Search, options.Limit, options.Offset}
-	if strings.TrimSpace(parentID) != "" {
+	if strings.TrimSpace(parentID) == "" && !r.publicReads {
+		query = `WITH page AS MATERIALIZED (
+			SELECT id FROM topics
+			WHERE deleted_at IS NULL AND ($1='' OR status::text=$1) AND ($2='' OR title ILIKE '%'||$2||'%')
+			ORDER BY order_index,title,id LIMIT $3 OFFSET $4
+		) ` + selectTopic + `page JOIN topics USING (id) ORDER BY order_index,title,id`
+	} else if strings.TrimSpace(parentID) != "" {
 		query = selectTopic + `topics t WHERE course_id=$1::uuid AND deleted_at IS NULL AND ($2='' OR status::text=$2) AND ($3='' OR title ILIKE '%'||$3||'%') ORDER BY order_index,title,id LIMIT $4 OFFSET $5`
 		if r.publicReads {
 			// Обход от корней не включает циклы и потомков скрытого родителя.
@@ -417,7 +432,15 @@ func (r *Postgres) UpdateTopic(ctx context.Context, item domain.Topic) (domain.T
 				return domain.Topic{}, err
 			}
 		}
-		result, err := scanTopic(tx.QueryRow(ctx, `UPDATE topics SET parent_topic_id=$2,title=$3,slug=$4,description=$5,order_index=$6,difficulty=$7,updated_by=$8,updated_at=now() WHERE id=$1 AND deleted_at IS NULL RETURNING id,course_id,parent_topic_id,title,slug,description,order_index,difficulty,status,created_by,updated_by,created_at,updated_at,deleted_at`, item.ID, item.ParentTopicID, item.Title, item.Slug, item.Description, item.OrderIndex, item.Difficulty, item.UpdatedBy))
+		minutes, outcomes := topicLearningValues(item.LearningMetadata)
+		result, err := scanTopic(tx.QueryRow(ctx, `
+			UPDATE topics SET parent_topic_id=$2,title=$3,slug=$4,description=$5,order_index=$6,
+				difficulty=$7,updated_by=$8,updated_at=now(),
+				estimated_study_minutes=CASE WHEN $9::boolean THEN $10::smallint ELSE estimated_study_minutes END,
+				learning_outcomes=CASE WHEN $9::boolean THEN COALESCE($11::text[],'{}') ELSE learning_outcomes END
+			WHERE id=$1 AND deleted_at IS NULL RETURNING `+topicColumns,
+			item.ID, item.ParentTopicID, item.Title, item.Slug, item.Description, item.OrderIndex,
+			item.Difficulty, item.UpdatedBy, item.LearningMetadata != nil, minutes, outcomes))
 		if err != nil {
 			return domain.Topic{}, translateConstraint(translateNotFound(err, apperror.TopicNotFound), apperror.TopicAlreadyExists)
 		}
@@ -435,7 +458,7 @@ func (r *Postgres) DeleteTopic(ctx context.Context, id, actorID string) error {
 // ChangeTopicStatus меняет status темы и пишет outbox event.
 func (r *Postgres) ChangeTopicStatus(ctx context.Context, id string, status domain.Status, actorID string) (domain.Topic, error) {
 	return writeCatalog(ctx, r.pool, func(tx pgx.Tx) (domain.Topic, error) {
-		result, err := scanTopic(tx.QueryRow(ctx, `UPDATE topics SET status=$2,updated_by=$3,updated_at=now() WHERE id=$1 AND deleted_at IS NULL RETURNING id,course_id,parent_topic_id,title,slug,description,order_index,difficulty,status,created_by,updated_by,created_at,updated_at,deleted_at`, id, status, actorID))
+		result, err := scanTopic(tx.QueryRow(ctx, `UPDATE topics SET status=$2,updated_by=$3,updated_at=now() WHERE id=$1 AND deleted_at IS NULL RETURNING `+topicColumns, id, status, actorID))
 		if err != nil {
 			return domain.Topic{}, translateConstraint(translateNotFound(err, apperror.TopicNotFound), apperror.TopicAlreadyExists)
 		}
@@ -682,9 +705,23 @@ func scanCourse(row scanner) (domain.Course, error) {
 // scanTopic считывает строку PostgreSQL в domain.Topic.
 func scanTopic(row scanner) (domain.Topic, error) {
 	var item domain.Topic
-	err := row.Scan(&item.ID, &item.CourseID, &item.ParentTopicID, &item.Title, &item.Slug, &item.Description, &item.OrderIndex, &item.Difficulty, &item.Status, &item.CreatedBy, &item.UpdatedBy, &item.CreatedAt, &item.UpdatedAt, &item.DeletedAt)
+	var metadata domain.TopicLearningMetadata
+	err := row.Scan(&item.ID, &item.CourseID, &item.ParentTopicID, &item.Title, &item.Slug, &item.Description,
+		&item.OrderIndex, &item.Difficulty, &item.Status, &item.CreatedBy, &item.UpdatedBy, &item.CreatedAt,
+		&item.UpdatedAt, &item.DeletedAt, &metadata.EstimatedMinutes, &metadata.Outcomes)
+	if metadata.EstimatedMinutes != nil || len(metadata.Outcomes) != 0 {
+		item.LearningMetadata = &metadata
+	}
 
 	return item, err
+}
+
+func topicLearningValues(metadata *domain.TopicLearningMetadata) (*int, []string) {
+	if metadata == nil {
+		return nil, nil
+	}
+
+	return metadata.EstimatedMinutes, metadata.Outcomes
 }
 
 // translateNotFound преобразует pgx.ErrNoRows в публичную not-found ошибку Entities.

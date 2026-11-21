@@ -269,8 +269,8 @@ func (h *Handler) createTopic(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var input domain.Topic
-	if !decode(w, r, &input) {
+	input, ok := decodeTopic(w, r)
+	if !ok {
 		return
 	}
 	result, err := h.service.CreateTopic(r.Context(), input, actor)
@@ -295,8 +295,8 @@ func (h *Handler) updateTopic(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var input domain.Topic
-	if !decode(w, r, &input) {
+	input, ok := decodeTopic(w, r)
+	if !ok {
 		return
 	}
 	input.ID = r.PathValue("id")

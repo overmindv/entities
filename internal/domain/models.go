@@ -69,20 +69,26 @@ type Course struct {
 
 // Topic описывает тему внутри курса или backlog-тему без курса.
 type Topic struct {
-	ID            string     `json:"id"`
-	CourseID      *string    `json:"course_id"`
-	ParentTopicID *string    `json:"parent_topic_id"`
-	Title         string     `json:"title"`
-	Slug          string     `json:"slug"`
-	Description   string     `json:"description"`
-	OrderIndex    int        `json:"order_index"`
-	Difficulty    string     `json:"difficulty"`
-	Status        Status     `json:"status"`
-	CreatedBy     string     `json:"created_by"`
-	UpdatedBy     string     `json:"updated_by"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
-	DeletedAt     *time.Time `json:"deleted_at,omitempty"`
+	ID               string                 `json:"id"`
+	CourseID         *string                `json:"course_id"`
+	ParentTopicID    *string                `json:"parent_topic_id"`
+	Title            string                 `json:"title"`
+	Slug             string                 `json:"slug"`
+	Description      string                 `json:"description"`
+	OrderIndex       int                    `json:"order_index"`
+	Difficulty       string                 `json:"difficulty"`
+	Status           Status                 `json:"status"`
+	CreatedBy        string                 `json:"created_by"`
+	UpdatedBy        string                 `json:"updated_by"`
+	CreatedAt        time.Time              `json:"created_at"`
+	UpdatedAt        time.Time              `json:"updated_at"`
+	DeletedAt        *time.Time             `json:"deleted_at,omitempty"`
+	LearningMetadata *TopicLearningMetadata `json:"learning_metadata,omitempty"`
+}
+
+type TopicLearningMetadata struct {
+	EstimatedMinutes *int     `json:"estimated_minutes"`
+	Outcomes         []string `json:"outcomes"`
 }
 
 // TopicTreeNode описывает узел дерева тем.
