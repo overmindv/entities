@@ -467,10 +467,20 @@ func (r *Postgres) ChangeTopicStatus(ctx context.Context, id string, status doma
 	})
 }
 
-// AddPrerequisite создаёт связь prerequisite и пишет outbox event.
+// AddPrerequisite проверяет граф, добавляет связь и записывает событие.
 func (r *Postgres) AddPrerequisite(ctx context.Context, item domain.TopicPrerequisite, actorID string) (domain.TopicPrerequisite, error) {
 	return writeCatalog(ctx, r.pool, func(tx pgx.Tx) (domain.TopicPrerequisite, error) {
-		err := tx.QueryRow(ctx, `INSERT INTO topic_prerequisites (topic_id,prerequisite_topic_id) VALUES ($1,$2) RETURNING topic_id,prerequisite_topic_id,created_at`, item.TopicID, item.PrerequisiteTopicID).Scan(&item.TopicID, &item.PrerequisiteTopicID, &item.CreatedAt)
+		courseID, err := lockPrerequisiteGraph(ctx, tx, item.TopicID)
+		if err != nil {
+			return domain.TopicPrerequisite{}, translateNotFound(err, apperror.TopicNotFound)
+		}
+		if checkErr := checkPrerequisite(ctx, tx, item, courseID); checkErr != nil {
+			return domain.TopicPrerequisite{}, checkErr
+		}
+		err = tx.QueryRow(ctx, `
+			INSERT INTO topic_prerequisites (topic_id,prerequisite_topic_id) VALUES ($1,$2)
+			RETURNING topic_id,prerequisite_topic_id,created_at`, item.TopicID, item.PrerequisiteTopicID).
+			Scan(&item.TopicID, &item.PrerequisiteTopicID, &item.CreatedAt)
 		if err != nil {
 			return domain.TopicPrerequisite{}, translateConstraint(err, apperror.InvalidTopicPrerequisite)
 		}
@@ -482,6 +492,13 @@ func (r *Postgres) AddPrerequisite(ctx context.Context, item domain.TopicPrerequ
 // RemovePrerequisite удаляет связь prerequisite и пишет outbox event.
 func (r *Postgres) RemovePrerequisite(ctx context.Context, topicID, prerequisiteID, actorID string) error {
 	return pgx.BeginFunc(ctx, r.pool, func(tx pgx.Tx) error {
+		if _, err := lockPrerequisiteGraph(ctx, tx, topicID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return apperror.New(apperror.InvalidTopicPrerequisite, "пререквизит не найден", 404)
+			}
+
+			return err
+		}
 		tag, err := tx.Exec(ctx, `DELETE FROM topic_prerequisites WHERE topic_id=$1 AND prerequisite_topic_id=$2`, topicID, prerequisiteID)
 		if err != nil {
 			return err
@@ -516,14 +533,6 @@ func (r *Postgres) ListPrerequisites(ctx context.Context, topicID string) ([]dom
 	}
 
 	return result, rows.Err()
-}
-
-// PrerequisitePathExists проверяет достижимость темы в graph prerequisites.
-func (r *Postgres) PrerequisitePathExists(ctx context.Context, fromID, toID string) (bool, error) {
-	var exists bool
-	err := r.pool.QueryRow(ctx, `WITH RECURSIVE graph(id) AS (SELECT prerequisite_topic_id FROM topic_prerequisites WHERE topic_id=$1 UNION SELECT tp.prerequisite_topic_id FROM topic_prerequisites tp JOIN graph g ON tp.topic_id=g.id) SELECT EXISTS(SELECT 1 FROM graph WHERE id=$2)`, fromID, toID).Scan(&exists)
-
-	return exists, err
 }
 
 // ValidateBinding проверяет существование и согласованность partial/full catalog binding.

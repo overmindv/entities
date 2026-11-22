@@ -44,7 +44,6 @@ type Store interface {
 	AddPrerequisite(ctx context.Context, item domain.TopicPrerequisite, actorID string) (domain.TopicPrerequisite, error)
 	RemovePrerequisite(ctx context.Context, topicID, prerequisiteID, actorID string) error
 	ListPrerequisites(ctx context.Context, topicID string) ([]domain.TopicPrerequisite, error)
-	PrerequisitePathExists(ctx context.Context, fromID, toID string) (bool, error)
 	ValidateBinding(ctx context.Context, binding domain.Binding) (bool, error)
 }
 
@@ -213,27 +212,8 @@ func (s *Service) TopicTree(ctx context.Context, courseID string) ([]*domain.Top
 
 // AddPrerequisite добавляет связь prerequisite между темами одного курса.
 func (s *Service) AddPrerequisite(ctx context.Context, item domain.TopicPrerequisite, actorID string) (domain.TopicPrerequisite, error) {
-	if item.TopicID == item.PrerequisiteTopicID || !validUUID(item.TopicID) || !validUUID(item.PrerequisiteTopicID) {
+	if strings.EqualFold(item.TopicID, item.PrerequisiteTopicID) || !validUUID(item.TopicID) || !validUUID(item.PrerequisiteTopicID) {
 		return domain.TopicPrerequisite{}, apperror.New(apperror.InvalidTopicPrerequisite, "тема не может быть пререквизитом самой себя", http.StatusUnprocessableEntity)
-	}
-	topic, err := s.store.GetTopic(ctx, item.TopicID)
-	if err != nil {
-		return domain.TopicPrerequisite{}, err
-	}
-	prerequisite, err := s.store.GetTopic(ctx, item.PrerequisiteTopicID)
-	if err != nil {
-		return domain.TopicPrerequisite{}, err
-	}
-	if !sameOptionalString(topic.CourseID, prerequisite.CourseID) {
-		return domain.TopicPrerequisite{}, apperror.New(apperror.InvalidTopicPrerequisite, "темы должны принадлежать одному курсу", http.StatusUnprocessableEntity)
-	}
-	// Проверяем обратный путь до вставки, чтобы новая связь не замкнула граф пререквизитов.
-	cycle, err := s.store.PrerequisitePathExists(ctx, item.PrerequisiteTopicID, item.TopicID)
-	if err != nil {
-		return domain.TopicPrerequisite{}, err
-	}
-	if cycle {
-		return domain.TopicPrerequisite{}, apperror.New(apperror.TopicPrerequisiteCycle, "обнаружен цикл пререквизитов", http.StatusConflict)
 	}
 
 	return s.store.AddPrerequisite(ctx, item, actorID)
