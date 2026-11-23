@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/overmindv/entities/internal/apperror"
 	"github.com/overmindv/entities/internal/domain"
+	"github.com/samber/lo"
 )
 
 // Postgres реализует storage contract Entities поверх PostgreSQL.
@@ -59,6 +60,11 @@ func (r *Postgres) CreateUniversity(ctx context.Context, item domain.University)
 		if err != nil {
 			return domain.University{}, translateConstraint(err, apperror.UniversityAlreadyExists)
 		}
+		if result.LogoFileID != nil {
+			if err := putLogoBinding(ctx, tx, result.ID, result.LogoFileID, item.CreatedBy); err != nil {
+				return domain.University{}, err
+			}
+		}
 
 		return result, insertCatalogEvent(ctx, tx, "catalog.university.created", "university", result.ID, item.CreatedBy, result)
 	})
@@ -70,6 +76,14 @@ func (r *Postgres) GetUniversity(ctx context.Context, id string) (domain.Univers
 	item, err := scanUniversity(row)
 
 	return item, translateNotFound(err, apperror.UniversityNotFound)
+}
+
+func (r *Postgres) UniversityLogoFile(ctx context.Context, id string) (*string, error) {
+	var fileID *string
+	err := r.pool.QueryRow(ctx, `
+		SELECT logo_file_id::text FROM universities WHERE id = $1 AND deleted_at IS NULL`, id).Scan(&fileID)
+
+	return fileID, translateNotFound(err, apperror.UniversityNotFound)
 }
 
 // ListUniversities возвращает активные университеты с фильтрацией через Jet query builder.
@@ -121,12 +135,33 @@ func (r *Postgres) ListUniversities(ctx context.Context, options domain.ListOpti
 }
 
 // UpdateUniversity обновляет университет и пишет outbox event.
-func (r *Postgres) UpdateUniversity(ctx context.Context, item domain.University) (domain.University, error) {
+func (r *Postgres) UpdateUniversity(ctx context.Context, item domain.University, expectedLogo *string) (domain.University, error) {
 	return writeCatalog(ctx, r.pool, func(tx pgx.Tx) (domain.University, error) {
-		row := tx.QueryRow(ctx, `UPDATE universities SET name=$2, short_name=$3, city=$4, country=$5, website_url=$6, logo_file_id=$7, updated_by=$8, updated_at=now() WHERE id=$1 AND deleted_at IS NULL RETURNING id, name, short_name, city, country, website_url, logo_file_id, status, created_by, updated_by, created_at, updated_at, deleted_at`, item.ID, item.Name, item.ShortName, item.City, item.Country, item.WebsiteURL, item.LogoFileID, item.UpdatedBy)
+		row := tx.QueryRow(ctx, `
+			UPDATE universities
+			SET name=$2, short_name=$3, city=$4, country=$5, website_url=$6, logo_file_id=$7, updated_by=$8, updated_at=now()
+			WHERE id=$1 AND deleted_at IS NULL AND logo_file_id IS NOT DISTINCT FROM $9::uuid
+			RETURNING id, name, short_name, city, country, website_url, logo_file_id, status, created_by,
+			          updated_by, created_at, updated_at, deleted_at`,
+			item.ID, item.Name, item.ShortName, item.City, item.Country, item.WebsiteURL, item.LogoFileID, item.UpdatedBy, expectedLogo)
 		result, err := scanUniversity(row)
+		if errors.Is(err, pgx.ErrNoRows) {
+			var exists bool
+			if readErr := tx.QueryRow(ctx, `
+				SELECT EXISTS (SELECT 1 FROM universities WHERE id = $1 AND deleted_at IS NULL)`, item.ID).Scan(&exists); readErr != nil {
+				return domain.University{}, readErr
+			}
+			if exists {
+				return domain.University{}, apperror.New(apperror.UniversityLogoChanged, "логотип уже изменен", 409)
+			}
+		}
 		if err != nil {
 			return domain.University{}, translateConstraint(translateNotFound(err, apperror.UniversityNotFound), apperror.UniversityAlreadyExists)
+		}
+		if lo.FromPtr(expectedLogo) != lo.FromPtr(result.LogoFileID) {
+			if err := putLogoBinding(ctx, tx, result.ID, result.LogoFileID, item.UpdatedBy); err != nil {
+				return domain.University{}, err
+			}
 		}
 
 		return result, insertCatalogEvent(ctx, tx, "catalog.university.updated", "university", result.ID, item.UpdatedBy, result)
@@ -676,6 +711,17 @@ func (r *Postgres) softDelete(ctx context.Context, table, aggregate, id, actorID
 		}
 		if tag.RowsAffected() == 0 {
 			return apperror.New(code, "объект не найден", 404)
+		}
+		if table == "universities" {
+			var hasLogo bool
+			if err := tx.QueryRow(ctx, `SELECT logo_file_id IS NOT NULL FROM universities WHERE id = $1`, id).Scan(&hasLogo); err != nil {
+				return err
+			}
+			if hasLogo {
+				if err := putLogoBinding(ctx, tx, id, nil, actorID); err != nil {
+					return err
+				}
+			}
 		}
 
 		return insertCatalogEvent(ctx, tx, "catalog."+aggregate+".deleted", aggregate, id, actorID, map[string]string{"id": id})

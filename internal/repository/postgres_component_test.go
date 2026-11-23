@@ -168,7 +168,7 @@ func TestPostgresCatalogOutboxRollback(t *testing.T) {
 			update: func(r *Postgres) error {
 				changed := u
 				changed.Name = label + "-updated"
-				_, err := r.UpdateUniversity(ctx, changed)
+				_, err := r.UpdateUniversity(ctx, changed, u.LogoFileID)
 
 				return err
 			},
