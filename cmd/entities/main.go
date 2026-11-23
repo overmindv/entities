@@ -17,6 +17,9 @@ import (
 // postgres+миграции, логирование, метрики, graceful shutdown) — внутри parker,
 // здесь только бизнес-логика (см. run).
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "outbox-reconcile" {
+		os.Exit(runOutboxReconcile(os.Args[2:], os.Stdout, os.Stderr))
+	}
 	os.Exit(parker.Main(run, parker.WithAppName("entities")))
 }
 
@@ -48,9 +51,13 @@ func run(app *parker.App) error {
 	}
 	app.AddHealthCheck("kafka", parker.HealthCheckFunc(producer.Ping))
 
-	dispatcher := parker.NewOutboxDispatcher(
-		outbox.NewCatalogOutbox(pool, env("KAFKA_CATALOG_ACTIVITY_TOPIC", "catalog.activity.v1")),
-		producer, time.Second, app.Logger())
+	events := outbox.NewCatalogOutbox(pool, env("KAFKA_CATALOG_ACTIVITY_TOPIC", "catalog.activity.v1"))
+	if app.Metrics() != nil {
+		monitor := outbox.NewMonitor(events)
+		app.HTTP().Handle("GET "+outbox.MetricsPath, monitor.Handler())
+		app.AddRunnable("catalog-outbox-metrics", monitor.Run)
+	}
+	dispatcher := parker.NewOutboxDispatcher(events, producer, time.Second, app.Logger())
 	app.AddRunnable("catalog-events-outbox", dispatcher.Run)
 
 	return nil
