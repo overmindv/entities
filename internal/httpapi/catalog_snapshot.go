@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -21,9 +22,10 @@ type CatalogSnapshotStore interface {
 }
 
 const limitParam = "limit"
+const snapshotTokenEnv = "ENTITIES_SNAPSHOT_TOKEN"
 
 func RegisterCatalogSnapshot(router Router, store CatalogSnapshotStore, token string) error {
-	register, err := internalCatalogRoutes(router, token)
+	register, err := internalCatalogRoutes(router, token, snapshotTokenEnv)
 	if err != nil || register == nil {
 		return err
 	}
@@ -65,12 +67,12 @@ func RegisterCatalogSnapshot(router Router, store CatalogSnapshotStore, token st
 	return nil
 }
 
-func internalCatalogRoutes(router Router, token string) (func(string, http.HandlerFunc), error) {
+func internalCatalogRoutes(router Router, token, tokenEnv string) (func(string, http.HandlerFunc), error) {
 	if token == "" {
 		return nil, nil
 	}
 	if !validServiceToken(token) {
-		return nil, errors.New("ENTITIES_SNAPSHOT_TOKEN must contain 32-512 printable ASCII characters without spaces")
+		return nil, fmt.Errorf("%s must contain 32-512 printable ASCII characters without spaces", tokenEnv)
 	}
 	expected := sha256.Sum256([]byte(token))
 

@@ -51,6 +51,24 @@ var _ parker.Outbox = (*CatalogOutbox)(nil) // гарантирует реали
 
 var ErrClaimLost = errors.New("catalog outbox claim lost")
 
+const catalogUpdateSQL = `event_type IN ('catalog.' || aggregate_type || '.created', 'catalog.' || aggregate_type || '.updated')`
+const catalogVisibilityFlagSQL = `(feed_visibility->>'visible')::boolean`
+const catalogVisibleSQL = `COALESCE(` + catalogVisibilityFlagSQL + `, false)`
+const catalogHiddenPayloadSQL = `'{"status":"hidden"}'::jsonb`
+const catalogCardPayloadSQL = `CASE WHEN ` + catalogVisibilityFlagSQL + `
+	THEN jsonb_strip_nulls(jsonb_build_object(
+	    'name', left(payload->>'name',256), 'title', left(payload->>'title',256), 'status', payload->>'status'))
+	ELSE ` + catalogHiddenPayloadSQL + ` END`
+
+func catalogActivityType(eventType, aggregateType string, visible bool) string {
+	prefix := "catalog." + aggregateType + "."
+	if !visible && (eventType == prefix+"created" || eventType == prefix+"updated") {
+		return prefix + "unpublished"
+	}
+
+	return eventType
+}
+
 // FetchPending закрепляет готовые записи; отправка не удерживает транзакцию.
 func (o *CatalogOutbox) FetchPending(ctx context.Context, limit int) ([]parker.OutboxRecord, error) {
 	if limit <= 0 {
@@ -70,17 +88,9 @@ func (o *CatalogOutbox) FetchPending(ctx context.Context, limit int) ([]parker.O
 		)
 		SELECT id::text, event_type, occurred_at, actor_user_id::text,
 		       aggregate_type, aggregate_id::text,
-		       CASE WHEN event_type IN ('catalog.' || aggregate_type || '.created',
-		                                'catalog.' || aggregate_type || '.updated')
-		            THEN CASE WHEN (feed_visibility->>'visible')::boolean
-		                      THEN jsonb_strip_nulls(jsonb_build_object(
-		                          'name', left(payload->>'name',256),
-		                          'title', left(payload->>'title',256),
-		                          'status', payload->>'status'))
-		                      ELSE '{"status":"hidden"}'::jsonb END
-		            ELSE payload END,
+		       CASE WHEN `+catalogUpdateSQL+` THEN `+catalogCardPayloadSQL+` ELSE payload END,
 		       catalog_revision, aggregate_version, graph_change, feed_visibility,
-		       COALESCE((feed_visibility->>'visible')::boolean, false),
+		       `+catalogVisibleSQL+`,
 		       claim_token::text, lease_until, attempts
 		FROM claimed
 		ORDER BY occurred_at, id`, limit)
@@ -112,15 +122,8 @@ func (o *CatalogOutbox) FetchPending(ctx context.Context, limit int) ([]parker.O
 			return nil, fmt.Errorf("catalog outbox scan: %w", err)
 		}
 
-		prefix := "catalog." + aggregateType + "."
-		switch eventType {
-		case prefix + "created", prefix + "updated":
-			if !public {
-				eventType = prefix + "unpublished"
-			}
-		}
 		envelope, err := json.Marshal(catalogEnvelope{
-			EventType:        eventType,
+			EventType:        catalogActivityType(eventType, aggregateType, public),
 			OccurredAt:       occurredAt,
 			ActorUserID:      actorUserID,
 			AggregateType:    aggregateType,

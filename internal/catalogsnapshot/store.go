@@ -111,7 +111,7 @@ func (k graphKey) cursor(watermark int64) string {
 	return base64.RawURLEncoding.EncodeToString(raw[:])
 }
 
-func (s *Store) watermark(ctx context.Context, requested *int64) (int64, error) {
+func (s *Store) ResolveWatermark(ctx context.Context, requested *int64) (int64, error) {
 	var current int64
 	if err := s.pool.QueryRow(ctx, "SELECT revision FROM catalog_clock WHERE singleton").Scan(&current); err != nil {
 		return 0, err
@@ -145,7 +145,7 @@ func (s *Store) Snapshot(ctx context.Context, request SnapshotRequest) (Snapshot
 	if request.Cursor != "" && version != *request.Watermark {
 		return SnapshotPage{}, ErrInvalidPage
 	}
-	watermark, err := s.watermark(ctx, request.Watermark)
+	watermark, err := s.ResolveWatermark(ctx, request.Watermark)
 	if err != nil {
 		return SnapshotPage{}, err
 	}
@@ -193,7 +193,7 @@ func (s *Store) Changes(ctx context.Context, request ChangeRequest) (ChangePage,
 	if request.Limit < 1 || request.Limit > MaxLimit || request.After < 0 {
 		return ChangePage{}, ErrInvalidPage
 	}
-	watermark, err := s.watermark(ctx, request.Watermark)
+	watermark, err := s.ResolveWatermark(ctx, request.Watermark)
 	if err != nil {
 		return ChangePage{}, err
 	}
