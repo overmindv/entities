@@ -18,6 +18,8 @@ type snapshotStub struct {
 	err    error
 }
 
+const expectedNoStore = "no-store"
+
 func (s *snapshotStub) Snapshot(_ context.Context, request catalogsnapshot.SnapshotRequest) (catalogsnapshot.SnapshotPage, error) {
 	s.page = request
 	s.calls++
@@ -51,7 +53,7 @@ func TestCatalogSnapshotRoutes(t *testing.T) {
 		}
 		recorder := httptest.NewRecorder()
 		mux.ServeHTTP(recorder, req)
-		if recorder.Header().Get("Cache-Control") != "no-store" {
+		if recorder.Header().Get("Cache-Control") != expectedNoStore {
 			t.Fatal("private catalog reply is cacheable")
 		}
 
