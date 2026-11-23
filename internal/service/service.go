@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"regexp"
 	"sort"
@@ -11,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/overmindv/entities/internal/apperror"
 	"github.com/overmindv/entities/internal/domain"
+	"github.com/overmindv/entities/internal/media"
 	"github.com/samber/lo"
 )
 
@@ -19,8 +21,9 @@ type Store interface {
 	Ping(ctx context.Context) error
 	CreateUniversity(ctx context.Context, item domain.University) (domain.University, error)
 	GetUniversity(ctx context.Context, id string) (domain.University, error)
+	UniversityLogoFile(ctx context.Context, id string) (*string, error)
 	ListUniversities(ctx context.Context, options domain.ListOptions) ([]domain.University, error)
-	UpdateUniversity(ctx context.Context, item domain.University) (domain.University, error)
+	UpdateUniversity(ctx context.Context, item domain.University, expectedLogo *string) (domain.University, error)
 	DeleteUniversity(ctx context.Context, id, actorID string) error
 	ChangeUniversityStatus(ctx context.Context, id string, status domain.Status, actorID string) (domain.University, error)
 	CreateProgram(ctx context.Context, item domain.Program) (domain.Program, error)
@@ -50,12 +53,22 @@ type Store interface {
 // Service реализует бизнес-правила каталога поверх storage layer.
 type Service struct {
 	store Store
+	logos LogoChecker
+}
+
+type LogoChecker interface {
+	CheckLogo(ctx context.Context, actorID, fileID string) error
 }
 
 // New создаёт catalog service с переданным storage contract.
 func New(store Store) *Service {
+	return NewWithLogoChecker(store, nil)
+}
+
+func NewWithLogoChecker(store Store, logos LogoChecker) *Service {
 	return &Service{
 		store: store,
+		logos: logos,
 	}
 }
 
@@ -67,11 +80,15 @@ func (s *Service) Store() Store {
 // CreateUniversity нормализует и создаёт университет от имени администратора.
 func (s *Service) CreateUniversity(ctx context.Context, item domain.University, actorID string) (domain.University, error) {
 	item.Name = strings.TrimSpace(item.Name)
-	item.LogoFileID = normalizeOptionalUUID(item.LogoFileID)
+	logo, valid := normalizeLogoFileID(item.LogoFileID)
+	item.LogoFileID = logo
 	item.Status = defaultStatus(item.Status)
 	item.CreatedBy = actorID
-	if !validUUIDPointer(item.LogoFileID) || item.Name == "" {
+	if !valid || item.Name == "" {
 		return domain.University{}, validation("logo_file_id должен быть UUID, если он передан; name обязателен")
+	}
+	if err := s.checkLogo(ctx, actorID, item.LogoFileID); err != nil {
+		return domain.University{}, err
 	}
 
 	return s.store.CreateUniversity(ctx, item)
@@ -80,13 +97,62 @@ func (s *Service) CreateUniversity(ctx context.Context, item domain.University, 
 // UpdateUniversity нормализует и обновляет университет от имени администратора.
 func (s *Service) UpdateUniversity(ctx context.Context, item domain.University, actorID string) (domain.University, error) {
 	item.Name = strings.TrimSpace(item.Name)
-	item.LogoFileID = normalizeOptionalUUID(item.LogoFileID)
+	logo, valid := normalizeLogoFileID(item.LogoFileID)
+	item.LogoFileID = logo
 	item.UpdatedBy = actorID
-	if !validUUID(item.ID) || !validUUIDPointer(item.LogoFileID) || item.Name == "" {
+	if !validUUID(item.ID) || !valid || item.Name == "" {
 		return domain.University{}, validation("id и name обязательны; logo_file_id должен быть UUID, если он передан")
 	}
+	// При неизменном логотипе запись не требует отдельного чтения или запроса в Media.
+	updated, err := s.store.UpdateUniversity(ctx, item, item.LogoFileID)
+	var conflict *apperror.Error
+	if !errors.As(err, &conflict) || conflict.Code != apperror.UniversityLogoChanged {
+		return updated, err
+	}
+	current, err := s.store.UniversityLogoFile(ctx, item.ID)
+	if err != nil {
+		return domain.University{}, err
+	}
+	if lo.FromPtr(current) != lo.FromPtr(item.LogoFileID) {
+		if err := s.checkLogo(ctx, actorID, item.LogoFileID); err != nil {
+			return domain.University{}, err
+		}
+	}
 
-	return s.store.UpdateUniversity(ctx, item)
+	return s.store.UpdateUniversity(ctx, item, current)
+}
+
+func (s *Service) checkLogo(ctx context.Context, actorID string, fileID *string) error {
+	if fileID == nil {
+		return nil
+	}
+	if s.logos != nil {
+		err := s.logos.CheckLogo(ctx, actorID, *fileID)
+		switch {
+		case err == nil:
+			return nil
+		case errors.Is(err, media.ErrLogoNotReady):
+			return apperror.New(apperror.UniversityLogoNotReady, "логотип недоступен для привязки", http.StatusConflict)
+		case errors.Is(err, media.ErrInvalidBinding):
+			return validation("некорректный идентификатор логотипа")
+		}
+	}
+
+	return apperror.New(apperror.MediaUnavailable, "сервис файлов недоступен", http.StatusServiceUnavailable)
+}
+
+func normalizeLogoFileID(value *string) (*string, bool) {
+	value = normalizeOptionalUUID(value)
+	if value == nil {
+		return nil, true
+	}
+	id, err := uuid.Parse(*value)
+	if err != nil || id == uuid.Nil {
+		return nil, false
+	}
+	normalized := id.String()
+
+	return &normalized, true
 }
 
 // CreateProgram нормализует и создаёт программу внутри университета или backlog-программу.

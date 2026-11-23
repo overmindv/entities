@@ -7,6 +7,8 @@ import (
 
 	"github.com/overmindv/entities/internal/catalogsnapshot"
 	"github.com/overmindv/entities/internal/httpapi"
+	"github.com/overmindv/entities/internal/logobindings"
+	"github.com/overmindv/entities/internal/media"
 	"github.com/overmindv/entities/internal/outbox"
 	"github.com/overmindv/entities/internal/repository"
 	"github.com/overmindv/entities/internal/service"
@@ -37,6 +39,19 @@ func run(app *parker.App) error {
 	snapshotToken := os.Getenv("ENTITIES_SNAPSHOT_TOKEN")
 	if gatewayToken != "" && gatewayToken == snapshotToken {
 		return errors.New("ENTITIES_GATEWAY_TOKEN must differ from ENTITIES_SNAPSHOT_TOKEN")
+	}
+	mediaURL, mediaToken := os.Getenv("ENTITIES_MEDIA_URL"), os.Getenv("ENTITIES_MEDIA_TOKEN")
+	if mediaURL != "" || mediaToken != "" {
+		if mediaToken != "" && (mediaToken == gatewayToken || mediaToken == snapshotToken) {
+			return errors.New("ENTITIES_MEDIA_TOKEN must differ from the gateway and snapshot tokens")
+		}
+		client, clientErr := media.NewClient(mediaURL, mediaToken)
+		if clientErr != nil {
+			return clientErr
+		}
+		catalog = service.NewWithLogoChecker(store, client)
+		worker := logobindings.NewWorker(store, client, app.Logger())
+		app.AddRunnable("university-logo-bindings", worker.Run)
 	}
 	if registerErr := httpapi.Register(app.HTTP(), catalog, service.New(store.PublicReads()), gatewayToken, app.Logger()); registerErr != nil {
 		return registerErr
