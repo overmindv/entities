@@ -165,34 +165,26 @@ func TestConcurrentTopicMovesRejectCycleAndKeepEventSmall(t *testing.T) {
 	if conflicts != 1 || moved.topic.ID == "" {
 		t.Fatal("expected one move and one cycle conflict", conflicts)
 	}
-	records, err := outbox.NewCatalogOutbox(pool, "fixture.catalog").FetchPending(ctx, 10_000)
-	if err != nil {
+	var eventID string
+	if err := pool.QueryRow(ctx, "SELECT id::text FROM outbox_events WHERE aggregate_id=$1 AND event_type=$2",
+		moved.topic.ID, topicUpdatedEvent).Scan(&eventID); err != nil {
 		t.Fatal(err)
 	}
-	for _, record := range records {
-		if record.Key != moved.topic.ID {
-			continue
-		}
-		var envelope struct {
-			Type       string `json:"event_type"`
-			Visibility struct {
-				Visible    bool     `json:"visible"`
-				ScopeReset bool     `json:"scope_reset"`
-				Ancestors  []string `json:"ancestors"`
-			} `json:"feed_visibility"`
-		}
-		if err := json.Unmarshal(record.Value, &envelope); err != nil {
-			t.Fatal(err)
-		}
-		if envelope.Type != topicUpdatedEvent {
-			continue
-		}
-		if len(record.Value) > 4<<10 || !envelope.Visibility.Visible || !envelope.Visibility.ScopeReset ||
-			!strings.Contains(strings.Join(envelope.Visibility.Ancestors, ","), "topic:"+moved.parent) {
-			t.Error("expected bounded public event with new parent and scope reset", len(record.Value), envelope.Visibility)
-		}
-
-		return
+	record := claimCatalogEvent(t, ctx, outbox.NewCatalogOutbox(pool, "fixture.catalog"), eventID)
+	var envelope struct {
+		Type       string `json:"event_type"`
+		Visibility struct {
+			Visible    bool     `json:"visible"`
+			ScopeReset bool     `json:"scope_reset"`
+			Ancestors  []string `json:"ancestors"`
+		} `json:"feed_visibility"`
 	}
-	t.Fatal("move event missing")
+	if err := json.Unmarshal(record.Value, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if record.Key != moved.topic.ID || envelope.Type != topicUpdatedEvent || len(record.Value) > 4<<10 ||
+		!envelope.Visibility.Visible || !envelope.Visibility.ScopeReset ||
+		!strings.Contains(strings.Join(envelope.Visibility.Ancestors, ","), "topic:"+moved.parent) {
+		t.Error("expected bounded public event with new parent and scope reset", len(record.Value), envelope.Visibility)
+	}
 }

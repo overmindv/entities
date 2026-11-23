@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/overmindv/entities/internal/catalogsnapshot"
 	"github.com/overmindv/entities/internal/domain"
 	"github.com/overmindv/entities/internal/outbox"
+	"github.com/overmindv/parker"
 )
 
 type graphRecord struct {
@@ -222,42 +224,62 @@ func TestPostgresCatalogSnapshotReplay(t *testing.T) {
 	}
 
 	eventID := changes[0].EventID
-	var pending int
-	check(pool.QueryRow(ctx, "SELECT count(*) FROM outbox_events WHERE published_at IS NULL").Scan(&pending))
-	if pending < 1 || pending > 10000 {
-		t.Fatal("unexpected number of test outbox rows", pending)
-	}
 	dispatch := outbox.NewCatalogOutbox(pool, "catalog.activity.v1")
-	for range 2 {
-		events, fetchErr := dispatch.FetchPending(ctx, pending)
-		check(fetchErr)
-		found := false
-		for _, event := range events {
-			if event.ID != eventID {
-				continue
-			}
-			var envelope struct {
-				EventType string `json:"event_type"`
-				EventID   string `json:"event_id"`
-				Revision  int64  `json:"catalog_revision"`
-			}
-			check(json.Unmarshal(event.Value, &envelope))
-			if envelope.EventID != eventID || envelope.EventType != "catalog.topic.updated" ||
-				envelope.Revision != changes[0].Revision || event.Key != a.ID {
-				t.Fatal("Kafka envelope differs from replay event", envelope)
-			}
-			found = true
-
-			break
-		}
-		if !found {
-			t.Fatal("missing pending event", eventID)
+	old := claimCatalogEvent(t, ctx, dispatch, eventID)
+	otherClaims, err := dispatch.FetchPending(ctx, 100)
+	check(err)
+	for _, other := range otherClaims {
+		if other.ID == old.ID {
+			t.Fatal("active claim was returned to another worker")
 		}
 	}
-	check(dispatch.MarkSent(ctx, []string{eventID}))
+	_, err = pool.Exec(ctx, "UPDATE outbox_events SET lease_until=now()-interval '1 second' WHERE id=$1", old.ID)
+	check(err)
+	event := claimCatalogEvent(t, ctx, dispatch, eventID)
+	if event.ClaimToken == old.ClaimToken || !bytes.Equal(event.Value, old.Value) {
+		t.Fatal("reclaimed event changed its payload or kept an expired token")
+	}
+	if ackErr := dispatch.MarkClaimSent(ctx, old); !errors.Is(ackErr, outbox.ErrClaimLost) {
+		t.Fatal("expired token acknowledged the new claim:", ackErr)
+	}
+	if ackErr := dispatch.MarkSent(ctx, []string{event.ID}); !errors.Is(ackErr, outbox.ErrClaimLost) {
+		t.Fatal("claim was acknowledged without a token:", ackErr)
+	}
+	var envelope struct {
+		EventType string `json:"event_type"`
+		EventID   string `json:"event_id"`
+		Revision  int64  `json:"catalog_revision"`
+	}
+	check(json.Unmarshal(event.Value, &envelope))
+	if envelope.EventID != eventID || envelope.EventType != "catalog.topic.updated" ||
+		envelope.Revision != changes[0].Revision || event.Key != a.ID {
+		t.Fatal("Kafka envelope differs from replay event", envelope)
+	}
+	check(dispatch.MarkClaimSent(ctx, event))
 	published, err := snapshots.Changes(ctx, catalogsnapshot.ChangeRequest{After: first.Watermark, Limit: 1})
 	check(err)
 	if len(published.Changes) != 1 || published.Changes[0].EventID != eventID {
 		t.Fatal("published event lost from replay")
 	}
+}
+
+func claimCatalogEvent(t testing.TB, ctx context.Context, dispatch *outbox.CatalogOutbox, id string) parker.OutboxRecord {
+	t.Helper()
+	for range 100 {
+		events, err := dispatch.FetchPending(ctx, 100)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, event := range events {
+			if event.ID == id {
+				return event
+			}
+		}
+		if len(events) == 0 {
+			break
+		}
+	}
+	t.Fatal("outbox event was not claimable")
+
+	return parker.OutboxRecord{}
 }

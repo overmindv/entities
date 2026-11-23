@@ -43,6 +43,21 @@ jobs:
           --health-interval 2s
           --health-timeout 2s
           --health-retries 15
+      kafka:
+        image: apache/kafka:4.3.1
+        env:
+          KAFKA_NODE_ID: "1"
+          KAFKA_PROCESS_ROLES: broker,controller
+          KAFKA_CONTROLLER_QUORUM_VOTERS: 1@127.0.0.1:9093
+          KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+          KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+          KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://127.0.0.1:9092
+          KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+          KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+          KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+          KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+        ports:
+          - "9092:9092"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -55,6 +70,15 @@ jobs:
         run: |
           go run ./cmd/entities migrate --dir migrations up
           ENTITIES_TEST_DSN="$DATABASE_URL" make test
+      - name: Recover catalog publishing after broker failure
+        env:
+          TEST_POSTGRES: ${{ job.services.postgres.id }}
+          DATABASE_URL: postgres://postgres@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/entities_kafka_test?sslmode=disable
+          ENTITIES_TEST_KAFKA_ADDR: 127.0.0.1:9092
+        run: |
+          docker exec "$TEST_POSTGRES" createdb -U postgres entities_kafka_test
+          go run ./cmd/entities migrate --dir migrations up
+          ENTITIES_TEST_DSN="$DATABASE_URL" go test -race ./internal/repository -run '^TestCatalogOutboxKafkaRecovery$' -count=1
 
   build:
     name: Build
