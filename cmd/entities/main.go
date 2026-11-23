@@ -37,10 +37,14 @@ func run(app *parker.App) error {
 	catalog := service.New(store)
 	gatewayToken := os.Getenv("ENTITIES_GATEWAY_TOKEN")
 	snapshotToken := os.Getenv("ENTITIES_SNAPSHOT_TOKEN")
+	feedReplayToken := os.Getenv("ENTITIES_FEED_REPLAY_TOKEN")
 	if gatewayToken != "" && gatewayToken == snapshotToken {
 		return errors.New("ENTITIES_GATEWAY_TOKEN must differ from ENTITIES_SNAPSHOT_TOKEN")
 	}
 	mediaURL, mediaToken := os.Getenv("ENTITIES_MEDIA_URL"), os.Getenv("ENTITIES_MEDIA_TOKEN")
+	if feedReplayToken != "" && (feedReplayToken == gatewayToken || feedReplayToken == snapshotToken || feedReplayToken == mediaToken) {
+		return errors.New("ENTITIES_FEED_REPLAY_TOKEN must differ from the gateway, snapshot and media tokens")
+	}
 	if mediaURL != "" || mediaToken != "" {
 		if mediaToken != "" && (mediaToken == gatewayToken || mediaToken == snapshotToken) {
 			return errors.New("ENTITIES_MEDIA_TOKEN must differ from the gateway and snapshot tokens")
@@ -62,6 +66,10 @@ func run(app *parker.App) error {
 	if registerErr := httpapi.RegisterGoalTemplateReads(app.HTTP(), store, snapshotToken); registerErr != nil {
 		return registerErr
 	}
+	events := outbox.NewCatalogOutbox(pool, env("KAFKA_CATALOG_ACTIVITY_TOPIC", "catalog.activity.v1"))
+	if registerErr := httpapi.RegisterCatalogFeedReplay(app.HTTP(), events, feedReplayToken); registerErr != nil {
+		return registerErr
+	}
 
 	producer, err := app.NewProducer() // из parker opts (KAFKA_BOOTSTRAP_SERVERS)
 	if err != nil {
@@ -69,7 +77,6 @@ func run(app *parker.App) error {
 	}
 	app.AddHealthCheck("kafka", parker.HealthCheckFunc(producer.Ping))
 
-	events := outbox.NewCatalogOutbox(pool, env("KAFKA_CATALOG_ACTIVITY_TOPIC", "catalog.activity.v1"))
 	if app.Metrics() != nil {
 		monitor := outbox.NewMonitor(events)
 		app.HTTP().Handle("GET "+outbox.MetricsPath, monitor.Handler())

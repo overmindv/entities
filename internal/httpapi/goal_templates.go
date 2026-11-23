@@ -56,7 +56,7 @@ func (h *Handler) publishGoalTemplate(w http.ResponseWriter, r *http.Request) {
 }
 
 func RegisterGoalTemplateReads(router Router, store GoalTemplateReader, token string) error {
-	register, err := internalCatalogRoutes(router, token)
+	register, err := internalCatalogRoutes(router, token, snapshotTokenEnv)
 	if err != nil || register == nil {
 		return err
 	}
