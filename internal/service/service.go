@@ -32,6 +32,7 @@ type Store interface {
 	UpdateProgram(ctx context.Context, item domain.Program) (domain.Program, error)
 	DeleteProgram(ctx context.Context, id, actorID string) error
 	ChangeProgramStatus(ctx context.Context, id string, status domain.Status, actorID string) (domain.Program, error)
+	PublishGoalTemplate(ctx context.Context, programID, templateID, actorID string, version int64, input domain.GoalTemplateInput) (domain.GoalTemplateVersion, bool, error)
 	CreateCourse(ctx context.Context, item domain.Course) (domain.Course, error)
 	GetCourse(ctx context.Context, id string) (domain.Course, error)
 	ListCourses(ctx context.Context, parentID string, options domain.ListOptions) ([]domain.Course, error)

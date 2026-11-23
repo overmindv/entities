@@ -59,6 +59,9 @@ func run(app *parker.App) error {
 	if registerErr := httpapi.RegisterCatalogSnapshot(app.HTTP(), catalogsnapshot.New(pool), snapshotToken); registerErr != nil {
 		return registerErr
 	}
+	if registerErr := httpapi.RegisterGoalTemplateReads(app.HTTP(), store, snapshotToken); registerErr != nil {
+		return registerErr
+	}
 
 	producer, err := app.NewProducer() // из parker opts (KAFKA_BOOTSTRAP_SERVERS)
 	if err != nil {

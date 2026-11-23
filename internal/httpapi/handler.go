@@ -57,6 +57,7 @@ func Register(router Router, catalog, public *service.Service, gatewayToken stri
 	router.HandleFunc("PUT /v1/programs/{id}", handler.updateProgram)
 	router.HandleFunc("DELETE /v1/programs/{id}", handler.deleteProgram)
 	router.HandleFunc("PATCH /v1/programs/{id}/status", handler.changeProgramStatus)
+	router.HandleFunc("PUT /v1/programs/{id}/goal-templates/{template_id}/versions/{version}", handler.publishGoalTemplate)
 	router.HandleFunc("GET /v1/courses", handler.listCourses)
 	router.HandleFunc("POST /v1/courses", handler.createCourse)
 	router.HandleFunc("GET /v1/courses/{id}", handler.getCourse)
@@ -493,7 +494,7 @@ func (h *Handler) writeError(w http.ResponseWriter, err error) {
 
 // listOptions читает query filters и нормализует pagination для списков.
 func listOptions(r *http.Request) domain.ListOptions {
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	limit, _ := strconv.Atoi(r.URL.Query().Get(limitParam))
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
 
 	return service.NormalizeList(domain.ListOptions{

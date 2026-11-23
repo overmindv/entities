@@ -20,27 +20,12 @@ type CatalogSnapshotStore interface {
 	Changes(context.Context, catalogsnapshot.ChangeRequest) (catalogsnapshot.ChangePage, error)
 }
 
-func RegisterCatalogSnapshot(router Router, store CatalogSnapshotStore, token string) error {
-	if token == "" {
-		return nil
-	}
-	if !validServiceToken(token) {
-		return errors.New("ENTITIES_SNAPSHOT_TOKEN must contain 32-512 printable ASCII characters without spaces")
-	}
-	expected := sha256.Sum256([]byte(token))
-	register := func(pattern string, handler http.HandlerFunc) {
-		endpoint := http.TimeoutHandler(handler, 5*time.Second, `{"code":"SERVICE_UNAVAILABLE","message":"Каталог временно недоступен"}`)
-		router.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Cache-Control", "no-store")
-			w.Header().Set("Content-Type", "application/json")
-			values := r.Header.Values("Authorization")
-			if len(values) != 1 || !bearerAuthorized(values[0], expected) {
-				writeJSON(w, http.StatusForbidden, apperror.New(apperror.PermissionDenied, "доступ запрещен", http.StatusForbidden))
+const limitParam = "limit"
 
-				return
-			}
-			endpoint.ServeHTTP(w, r)
-		})
+func RegisterCatalogSnapshot(router Router, store CatalogSnapshotStore, token string) error {
+	register, err := internalCatalogRoutes(router, token)
+	if err != nil || register == nil {
+		return err
 	}
 	register("GET /v1/internal/catalog/snapshot", func(w http.ResponseWriter, r *http.Request) {
 		values, limit, watermark, err := catalogPageQuery(r, "cursor")
@@ -80,6 +65,31 @@ func RegisterCatalogSnapshot(router Router, store CatalogSnapshotStore, token st
 	return nil
 }
 
+func internalCatalogRoutes(router Router, token string) (func(string, http.HandlerFunc), error) {
+	if token == "" {
+		return nil, nil
+	}
+	if !validServiceToken(token) {
+		return nil, errors.New("ENTITIES_SNAPSHOT_TOKEN must contain 32-512 printable ASCII characters without spaces")
+	}
+	expected := sha256.Sum256([]byte(token))
+
+	return func(pattern string, handler http.HandlerFunc) {
+		endpoint := http.TimeoutHandler(handler, 5*time.Second, `{"code":"SERVICE_UNAVAILABLE","message":"Каталог временно недоступен"}`)
+		router.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "no-store")
+			w.Header().Set("Content-Type", "application/json")
+			values := r.Header.Values("Authorization")
+			if len(values) != 1 || !bearerAuthorized(values[0], expected) {
+				writeJSON(w, http.StatusForbidden, apperror.New(apperror.PermissionDenied, "доступ запрещен", http.StatusForbidden))
+
+				return
+			}
+			endpoint.ServeHTTP(w, r)
+		})
+	}, nil
+}
+
 func validServiceToken(token string) bool {
 	return len(token) >= 32 && len(token) <= 512 && !strings.ContainsFunc(token, func(r rune) bool { return r < 0x21 || r > 0x7e })
 }
@@ -103,12 +113,12 @@ func catalogPageQuery(r *http.Request, cursorParam string) (url.Values, int, *in
 		return nil, 0, nil, catalogsnapshot.ErrInvalidPage
 	}
 	for key, value := range values {
-		if len(value) != 1 || (key != "limit" && key != "watermark" && key != cursorParam) {
+		if len(value) != 1 || (key != limitParam && key != "watermark" && key != cursorParam) {
 			return nil, 0, nil, catalogsnapshot.ErrInvalidPage
 		}
 	}
 	limit := catalogsnapshot.DefaultLimit
-	if raw, ok := values["limit"]; ok {
+	if raw, ok := values[limitParam]; ok {
 		n, err := parseRevision(raw[0])
 		if err != nil || n < 1 || n > catalogsnapshot.MaxLimit {
 			return nil, 0, nil, catalogsnapshot.ErrInvalidPage
