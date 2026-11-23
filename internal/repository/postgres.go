@@ -94,7 +94,7 @@ func (r *Postgres) ListUniversities(ctx context.Context, options domain.ListOpti
 	}
 	if options.Search != "" {
 		pattern := postgres.String("%" + options.Search + "%")
-		condition = condition.AND(name.LIKE(pattern).OR(shortName.LIKE(pattern)))
+		condition = condition.AND(postgres.LOWER(name).LIKE(postgres.LOWER(pattern)).OR(postgres.LOWER(shortName).LIKE(postgres.LOWER(pattern))))
 	}
 	statement := postgres.SELECT(id, name, shortName, city, country, websiteURL, logoFileID, status, createdBy, updatedBy, createdAt, updatedAt, deletedAt).
 		FROM(table).

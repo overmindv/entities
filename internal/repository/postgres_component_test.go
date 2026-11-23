@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -34,6 +35,31 @@ func testCatalogPool(t testing.TB, lockTimeout string) *pgxpool.Pool {
 	t.Cleanup(pool.Close)
 
 	return pool
+}
+
+//nolint:paralleltest // тест использует общую component-БД
+func TestListUniversitiesSearchIsCaseInsensitive(t *testing.T) {
+	store := New(testCatalogPool(t, ""))
+	actor := uuid.NewString()
+	name := "ВШЭ " + actor
+	created, err := store.CreateUniversity(t.Context(), domain.University{
+		Name:      name,
+		ShortName: "ВШЭ",
+		Status:    domain.StatusActive,
+		CreatedBy: actor,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.DeleteUniversity(context.Background(), created.ID, actor) })
+
+	items, err := store.ListUniversities(t.Context(), domain.ListOptions{Search: "вшэ", Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(items, func(item domain.University) bool { return item.ID == created.ID }) {
+		t.Fatalf("lowercase search did not find %q", name)
+	}
 }
 
 //nolint:paralleltest // тест блокирует таблицу общей component-БД
